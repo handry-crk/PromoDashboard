@@ -81,3 +81,22 @@ def test_flow():
         c.post("/api/auth/login", json={"memberId": mid, "pin": "0000"})
     assert c.post("/api/auth/login", json={"memberId": mid, "pin": "3333"}).status_code == 429
     assert c.get("/api/health").json()["ok"]
+
+
+def test_status_rules_and_multi_area():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    assert c.post("/api/auth/register", json={"name": ".*", "role": "team_leader", "pin": "1234", "email": "a@citarasakuliner.com"}).status_code == 200
+    P = {p["nama"]: p for p in c.get("/api/state", headers=H(ha)).json()["promos"]}
+    assert c.post(f"/api/promos/{P['Braga Pairing']['id']}/submit", headers=H(ha)).status_code == 400
+    r = c.put(f"/api/promos/{P['Paket AA 30 Ribu']['id']}", headers=H(ha), json={"params": {"packagePrice": 36000}}).json()
+    assert r["status"] == "draft"
+    md = c.get(f"/api/promos/{P['Mozza Duo']['id']}", headers=H(ha)).json()
+    days = {a: o["scenarios"]["meta"]["outletDays"] for a, o in md["results"].items()}
+    fixed = sum(o["scenarios"]["target"]["fixedCosts"] for o in md["results"].values())
+    assert 22000 < sum(days.values()) < 22400 and fixed == 74700000
+    assert md["targets"]["targetUnits"] == sum(o["scenarios"]["target"]["totalUnits"] for o in md["results"].values())
+    assert c.post("/api/calc", headers=H(ha), json={"promo": {"mechanism": "diskon_persen", "platformProfileId": "offline_kios",
+                  "items": [{"productId": "ayam-b"}], "params": {"discountPct": "x"}}}).status_code == 400

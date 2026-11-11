@@ -149,3 +149,30 @@ def test_recommend_aov_gerobak_speed():
     res = E.recommend({"objective": "aov", "area": "bandung", "maxDiscountPct": 15}, P, PR["offline_gerobak"], None,
                       BASELINES["offline_gerobak"]["bandung"])
     assert len(res) == 5 and time.time() - t < 3
+
+
+def test_happy_hour_share_scales_units():
+    base = {"mechanism": "happy_hour", "items": [{"productId": "ayam-b"}], "params": {"discountPct": 20, "hourShare": 100}}
+    full = run(base, "offline_kios", "bandung")["scenarios"]["target"]["totalUnits"]
+    part = run({**base, "params": {"discountPct": 20, "hourShare": 25}}, "offline_kios", "bandung")["scenarios"]["target"]["totalUnits"]
+    assert part < full
+
+
+def test_perceived_saving_for_ongkir():
+    o = run({"mechanism": "ongkir", "objective": "online", "items": [{"productId": "ayam-b"}],
+             "params": {"merchantOngkirRp": 3000, "platformOngkirRp": 2000}, "overrides": {"avgUnitsPerOrder": 1}}, "gofood", "bandung")
+    assert o["unit"]["perceivedSaving"] == 5000 and o["unit"]["extraCost"] == 3000
+    assert next(c for c in o["menarik"]["components"] if c["key"] == "hematRp")["score"] == 100
+
+
+def test_calibration_low_history_lowers_attractiveness():
+    b = {"mechanism": "bundle", "objective": "aov", "items": [{"productId": "ayam-b"}, {"productId": "mozza-k"}], "params": {"packagePrice": 27000}}
+    hist = [{"mechanism": "bundle", "platformId": "offline_kios", "takeRate": t} for t in (3, 4, 5)]
+    assert run(b, "offline_kios", "bandung", history=hist)["menarik"]["score"] < run(b, "offline_kios", "bandung")["menarik"]["score"]
+
+
+def test_invalid_numbers_raise_calc_error():
+    with pytest.raises(E.CalcError):
+        run({"mechanism": "diskon_persen", "items": [{"productId": "ayam-b"}], "params": {"discountPct": "abc"}}, "offline_kios", "bandung")
+    with pytest.raises(E.CalcError):
+        run({"mechanism": "diskon_persen", "items": [{"productId": "ayam-b"}], "params": {"discountPct": 150}}, "offline_kios", "bandung")

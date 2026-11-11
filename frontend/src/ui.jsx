@@ -212,8 +212,8 @@ export function Waterfall({ unit }) {
         else { const from = run; run = run + s.v; left = Math.min(from, run) / max; width = Math.abs(s.v) / max; }
         const color = s.kind === "result" ? (s.v > 0 ? "#2F6B4A" : "#B42F27") : s.kind === "total" ? "#212121" : s.kind === "fee" ? "#E0BFB1" : s.kind === "info" ? "transparent" : s.kind === "plus" ? "#2F6B4A" : "#B42F27";
         return (
-          <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto] items-center gap-2 text-[13px]">
-            <div className={`truncate ${s.kind === "total" || s.kind === "result" ? "font-extrabold" : "text-ink/75"}`}>{s.label}</div>
+          <div key={i} className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto] items-center gap-2 text-[13px]">
+            <div className={`leading-tight break-words ${s.kind === "total" || s.kind === "result" ? "font-extrabold" : "text-ink/75"}`}>{s.label}</div>
             <div className="relative h-4 rounded-full bg-cream/70 overflow-hidden">
               <motion.div className="absolute top-0 bottom-0 rounded-full" style={{ background: color, border: s.kind === "info" ? "1.5px dashed #B42F27" : "none" }}
                 initial={{ left: `${Math.max(0, left) * 100}%`, width: 0 }} animate={{ left: `${Math.max(0, left) * 100}%`, width: `${Math.max(width * 100, s.v ? 1 : 0)}%` }}

@@ -42,7 +42,7 @@ export default function PromoDetail({ st, reload, id }) {
   };
   const del = async () => { if (!confirm("Hapus promo ini?")) return; try { await api(`/promos/${id}`, { method: "DELETE" }); reload(); go("/library"); } catch (e) { toast(e.message, "bad"); } };
 
-  const sm = p.summary?.[area];
+  const sm = p.targets || p.summary?.[area];
   const ad = p.actual?.achievementDetail;
 
   return (
@@ -115,7 +115,8 @@ export default function PromoDetail({ st, reload, id }) {
       {/* planned vs actual */}
       {(p.effectiveStatus === "running" || p.status === "done" || p.waitingActual) && (
         <section className="card p-4">
-          <div className="font-extrabold text-[17px] mb-3"><b>Planned</b> vs Actual</div>
+          <div className="font-extrabold text-[17px] mb-1"><b>Planned</b> vs Actual</div>
+          {Object.keys(p.summary || {}).length > 1 && <div className="text-[12px] text-ink/55 mb-3">Target = gabungan semua area.</div>}
           {ad && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               {[["Unit", sm?.targetUnits, p.actual.units, ad.units], ["Tambahan revenue", sm?.targetIncRevenue, p.actual.incRevenue, ad.incRevenue, true],

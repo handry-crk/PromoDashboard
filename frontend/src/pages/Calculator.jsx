@@ -19,14 +19,23 @@ export const blankPromo = () => ({
 });
 
 export function NumInput({ value, onChange, suffix, prefix, className = "", ...rest }) {
-  const show = value === "" || value == null ? "" : Number(value).toLocaleString("id-ID", { maximumFractionDigits: 2 });
+  const fmt = (v) => (v === "" || v == null || isNaN(v) ? "" : Number(v).toLocaleString("id-ID", { maximumFractionDigits: 2 }));
+  const [text, setText] = useState(fmt(value));
+  const [focus, setFocus] = useState(false);
+  useEffect(() => { if (!focus) setText(fmt(value)); }, [value, focus]); // eslint-disable-line
   return (
     <div className="relative">
       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/50 text-[14px] font-semibold">{prefix}</span>}
-      <input {...rest} inputMode="decimal" className={`field num ${prefix ? "pl-9" : ""} ${suffix ? "pr-10" : ""} ${className}`} value={show}
+      <input {...rest} inputMode="decimal" className={`field num ${prefix ? "pl-9" : ""} ${suffix ? "pr-10" : ""} ${className}`} value={text}
+        onFocus={() => setFocus(true)} onBlur={() => { setFocus(false); setText(fmt(value)); }}
         onChange={(e) => {
-          const raw = e.target.value.replace(/\./g, "").replace(",", ".").replace(/[^\d.]/g, "");
-          onChange(raw === "" ? "" : Number(raw));
+          const t = e.target.value.replace(/[^\d.,]/g, "");
+          setText(t);
+          const raw = t.replace(/\./g, "").replace(",", ".");
+          if (raw === "" ) { onChange(""); return; }
+          if (raw.endsWith(".")) return; // waiting for decimals
+          const n = Number(raw);
+          if (!isNaN(n)) onChange(n);
         }} />
       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/50 text-[14px] font-semibold">{suffix}</span>}
     </div>
@@ -132,7 +141,20 @@ export default function Calculator({ st, reload, promoId }) {
   if (!promo) return <Loader text="Membuka promo…" />;
 
   const up = (patch) => setPromo((p) => ({ ...p, ...patch }));
-  const upParam = (k, v) => setPromo((p) => ({ ...p, params: { ...p.params, [k]: v } }));
+  const multi = promo.areas.length > 1;
+  const secondary = multi && area !== promo.areas[0];
+  const effParams = { ...(promo.params || {}), ...((promo.areaParams || {})[area] || {}) };
+  const upParam = (k, v) => setPromo((p) => {
+    if (p.areas.length > 1 && area !== p.areas[0]) {
+      const ap = p.areaParams || {};
+      return { ...p, areaParams: { ...ap, [area]: { ...(ap[area] || {}), [k]: v } } };
+    }
+    return { ...p, params: { ...p.params, [k]: v } };
+  });
+  const upArea = (a, k, v) => setPromo((p) => {
+    const ap = p.areaParams || {};
+    return { ...p, areaParams: { ...ap, [a]: { ...(ap[a] || {}), [k]: v === "" ? undefined : v } } };
+  });
   const ch = prof?.channelType || "offline";
   const sellable = st.products.filter((p) => prof && (p.channels || []).includes(prof.productChannel) && p.active !== false);
   const mechs = Object.entries(st.mechanisms).map(([k, l]) => [k, l, ch === "offline" && ONLINE_ONLY.includes(k)]);
@@ -240,7 +262,17 @@ export default function Calculator({ st, reload, promoId }) {
             ))}
             <button type="button" className="btn-soft" onClick={() => up({ items: [...promo.items, { productId: sellable[0]?.id, qty: 1, role: freeRole ? "free" : "paid" }], segmentMix: undefined })}><Plus size={16} />Tambah item</button>
           </div>
-          <MechParams promo={promo} upParam={upParam} st={st} sellable={sellable} />
+          {multi && (
+            <div className="flex flex-wrap items-center gap-2 pt-1 text-[13px] font-semibold">
+              <span className="text-ink/60">Harga promo untuk:</span>
+              {promo.areas.map((a) => (
+                <button type="button" key={a} onClick={() => setArea(a)} className={`px-3 min-h-[34px] rounded-full border ${area === a ? "bg-ink text-cream border-ink" : "border-line"}`}>
+                  {a === "bandung" ? "Bandung Raya" : "Jabodetabek"}</button>
+              ))}
+            </div>
+          )}
+          <MechParams promo={{ ...promo, params: effParams }} upParam={upParam} st={st} sellable={sellable} />
+          {secondary && <p className="text-[12px] text-ink/55">Kosongkan untuk memakai angka {promo.areas[0] === "bandung" ? "Bandung Raya" : "Jabodetabek"}.</p>}
         </Section>
 
         {ch !== "offline" && (
@@ -269,10 +301,20 @@ export default function Calculator({ st, reload, promoId }) {
 
         <Section title="Periode, outlet & kapasitas" open={false}>
           <div className="grid grid-cols-2 gap-3">
+            {multi && <p className="col-span-2 text-[12px] text-ink/55">Biaya tetap dibagi ke tiap area sesuai jumlah outlet.</p>}
             <div><label className="lbl">Mulai</label><input type="date" className="field" value={promo.periodStart || ""} onChange={(e) => up({ periodStart: e.target.value })} /></div>
             <div><label className="lbl">Selesai</label><input type="date" className="field" value={promo.periodEnd || ""} onChange={(e) => up({ periodEnd: e.target.value })} /></div>
-            <div><label className="lbl">Jumlah outlet/toko</label><NumInput value={promo.outlets} placeholder="dari baseline" onChange={(v) => up({ outlets: v })} /></div>
-            <div><label className="lbl">Open rate</label><NumInput suffix="%" value={promo.openRate} placeholder="100" onChange={(v) => up({ openRate: v })} /></div>
+            {multi ? promo.areas.map((a) => (
+              <div key={a} className="col-span-2 grid grid-cols-2 gap-3">
+                <div><label className="lbl">Outlet {a === "bandung" ? "Bandung Raya" : "Jabodetabek"}</label>
+                  <NumInput value={(promo.areaParams || {})[a]?.outlets ?? ""} placeholder="dari baseline" onChange={(v) => upArea(a, "outlets", v)} /></div>
+                <div><label className="lbl">Open rate {a === "bandung" ? "Bdg" : "Jkt"}</label>
+                  <NumInput suffix="%" value={(promo.areaParams || {})[a]?.openRate ?? ""} placeholder="baseline" onChange={(v) => upArea(a, "openRate", v)} /></div>
+              </div>
+            )) : (<>
+              <div><label className="lbl">Jumlah outlet/toko</label><NumInput value={promo.outlets} placeholder="dari baseline" onChange={(v) => up({ outlets: v })} /></div>
+              <div><label className="lbl">Open rate</label><NumInput suffix="%" value={promo.openRate} placeholder="100" onChange={(v) => up({ openRate: v })} /></div>
+            </>)}
             <div><label className="lbl">Transaksi/outlet/hari</label><NumInput value={promo.trxPerOutletDay} placeholder="dari baseline" onChange={(v) => up({ trxPerOutletDay: v })} /></div>
             <div><label className="lbl">Biaya variabel/unit</label><NumInput prefix="Rp" value={promo.variableCostPerUnit} onChange={(v) => up({ variableCostPerUnit: v })} /></div>
             <div><label className="lbl">Kuota/outlet/hari</label><NumInput value={promo.quotaPerOutletDay} onChange={(v) => up({ quotaPerOutletDay: v })} /></div>
@@ -416,8 +458,11 @@ export default function Calculator({ st, reload, promoId }) {
 }
 
 
+const SERVER_ONLY = ["results", "summary", "timeline", "comments", "targets", "stale", "effectiveStatus", "waitingActual", "actual",
+  "status", "kode", "createdBy", "createdById", "createdAt", "updatedAt", "priceVersion", "profileVersion", "rejectNote", "id"];
 function clean(p) {
   const out = { ...p };
+  SERVER_ONLY.forEach((k) => delete out[k]);
   ["outlets", "openRate", "trxPerOutletDay", "quotaPerOutletDay", "capacityPerOutletDay"].forEach((k) => { if (out[k] === "") delete out[k]; });
   if (out.segmentMix === undefined) delete out.segmentMix;
   if (out.segmentMix && !out.segmentMix.every((s) => s.counterfactual)) delete out.segmentMix;

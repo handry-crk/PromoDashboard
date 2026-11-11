@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import os
 import secrets
 import time
@@ -46,6 +47,8 @@ for k, v, d in (("SECRET_KEY", SECRET_KEY, "change-me"), ("DEFAULT_ADMIN_PIN", D
                 ("METRICS_API_KEY", METRICS_API_KEY, "change-me-metrics")):
     if v == d:
         log.warning("%s masih memakai nilai bawaan — ganti di environment variables Railway.", k)
+
+SESSION_DAYS = int(os.getenv("SESSION_DAYS", "30"))
 
 ROLES = {
     "head": "Marketing Manager",
@@ -164,6 +167,12 @@ def current_user(authorization: Optional[str] = Header(None)) -> dict:
     s = db.sessions.find_one({"token": tok})
     if not s:
         err(401, "Sesi berakhir. Silakan login lagi.")
+    try:
+        if (datetime.now(timezone.utc) - datetime.fromisoformat(s["at"])).days >= SESSION_DAYS:
+            db.sessions.delete_one({"token": tok})
+            err(401, "Sesi berakhir. Silakan login lagi.")
+    except (KeyError, ValueError):
+        pass
     m = db.members.find_one({"id": s["memberId"]})
     if not m or not m.get("active", True) or m.get("status", "approved") != "approved":
         err(401, "Akun tidak aktif atau belum disetujui Marketing Manager.")
@@ -224,6 +233,36 @@ def effective_status(p):
     return st, waiting
 
 
+def area_inputs(promo, areas, settings, prof_id):
+    """Split outlets and fixed costs across areas so a multi-area promo is not double counted."""
+    if len(areas) <= 1:
+        return {a: promo for a in areas}
+    ap = promo.get("areaParams") or {}
+    base = {a: baseline_for(settings, prof_id, a) for a in areas}
+    outlets = {}
+    if all((ap.get(a) or {}).get("outlets") for a in areas):
+        outlets = {a: float(ap[a]["outlets"]) for a in areas}
+    elif promo.get("outlets"):
+        tot = float(promo["outlets"])
+        if all(base[a].get("outlets") for a in areas):
+            bsum = sum(float(base[a]["outlets"]) for a in areas)
+            outlets = {a: tot * float(base[a]["outlets"]) / bsum for a in areas}
+        else:
+            outlets = {a: tot / len(areas) for a in areas}
+    else:
+        outlets = {a: float((ap.get(a) or {}).get("outlets") or base[a].get("outlets") or 1) for a in areas}
+    total = sum(outlets.values()) or 1
+    out = {}
+    for a in areas:
+        share = outlets[a] / total
+        p = dict(promo)
+        p["areaParams"] = {**ap, a: {**(ap.get(a) or {}), "outlets": round(outlets[a], 2)}}
+        p["fixedCosts"] = [{**f, "amount": E.r(float(f.get("amount") or 0) * share)} for f in promo.get("fixedCosts") or []]
+        p["_areaShare"] = share
+        out[a] = p
+    return out
+
+
 def compute(promo, areas=None):
     s = get_settings()
     P = products_map()
@@ -232,10 +271,12 @@ def compute(promo, areas=None):
         err(400, "Pilih platform/channel promo dulu.")
     areas = areas or promo.get("areas") or ["bandung"]
     hist = history_list()
+    per = area_inputs(promo, areas, s, prof["id"])
     out = {}
     for a in areas:
         try:
-            out[a] = E.run(promo, P, prof, a, s, baseline_for(s, prof["id"], a), hist)
+            out[a] = E.run(per[a], P, prof, a, s, baseline_for(s, prof["id"], a), hist)
+            out[a]["areaShare"] = per[a].get("_areaShare", 1)
         except E.CalcError as e:
             err(400, str(e))
     return out
@@ -321,7 +362,7 @@ def register(body: dict):
         err(400, f"Gunakan email kantor @{EMAIL_DOMAIN}.")
     if not (pin.isdigit() and 4 <= len(pin) <= 6):
         err(400, "PIN harus 4–6 angka.")
-    if db.members.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}, "status": {"$ne": "rejected"}}):
+    if db.members.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "status": {"$ne": "rejected"}}):
         err(400, "Nama sudah terdaftar. Pilih nama Anda di halaman login.")
     if db.members.find_one({"email": email, "status": {"$ne": "rejected"}}):
         err(400, "Email ini sudah terdaftar.")
@@ -514,6 +555,7 @@ def get_promo(pid: str, user=Depends(current_user)):
         err(404, "Promo tidak ditemukan.")
     v = promo_view(p)
     v["results"] = clean(p).get("results")
+    v["targets"] = aggregate_targets(p.get("summary") or {})
     v["timeline"] = clean(list(db.promo_logs.find({"promoId": pid}).sort("at", 1)))
     v["comments"] = clean(list(db.comments.find({"promoId": pid}).sort("at", 1)))
     pv = (get_settings().get("priceVersion") or 1)
@@ -555,7 +597,10 @@ def update_promo(pid: str, body: dict, user=Depends(require("planner", "channel_
     doc = {**clean(p), **upd, "updatedAt": now_iso()}
     mech_changed = any(json.dumps(p.get(k), sort_keys=True, default=str) != json.dumps(doc.get(k), sort_keys=True, default=str)
                        for k in ("items", "params", "areaParams", "mechanism", "funding", "programsJoined", "platformProfileId"))
-    if mech_changed and p["status"] in ("approved", "review_head", "review_finance", "running"):
+    if p["status"] == "rejected" and upd:
+        doc["status"] = "draft"
+        log_promo(pid, user, "edit", "Promo yang ditolak direvisi — kembali ke draft")
+    elif mech_changed and p["status"] in ("approved", "review_head", "review_finance", "running"):
         doc["status"] = "draft"
         log_promo(pid, user, "edit", "Mekanisme berubah setelah review — status kembali ke draft")
     save_results(doc)
@@ -575,6 +620,8 @@ def submit_promo(pid: str, body: dict | None = None, user=Depends(require("plann
     p = db.promos.find_one({"id": pid})
     if not p:
         err(404, "Promo tidak ditemukan.")
+    if p["status"] != "draft":
+        err(400, f"Promo berstatus {p['status']}; hanya draft yang bisa diajukan.")
     gates = [o["gate"]["status"] for o in (p.get("results") or {}).values()]
     strat = (p.get("strategic") or {})
     if "HOLD" in gates and not (strat.get("isStrategic") and strat.get("reason")):
@@ -616,6 +663,18 @@ def approve_promo(pid: str, body: dict, user=Depends(require("head"))):
     return get_promo(pid, user)
 
 
+def aggregate_targets(summary):
+    vals = list(summary.values())
+    if not vals:
+        return {}
+    tot = lambda k: sum(v.get(k) or 0 for v in vals)
+    units = tot("targetUnits")
+    return {"targetUnits": units, "targetIncRevenue": tot("targetIncRevenue"), "targetIncCM": tot("targetIncCM"),
+            "targetContribution": tot("targetContribution"),
+            "targetTakeRate": sum((v.get("targetTakeRate") or 0) * (v.get("targetUnits") or 0) for v in vals) / units if units else vals[0].get("targetTakeRate"),
+            "cmPct": vals[0].get("cmPct")}
+
+
 @app.post("/api/promos/{pid}/actual")
 def actual_promo(pid: str, body: dict, user=Depends(require("planner", "channel_pic", "head", "finance"))):
     p = db.promos.find_one({"id": pid})
@@ -624,7 +683,7 @@ def actual_promo(pid: str, body: dict, user=Depends(require("planner", "channel_
     st, _ = effective_status(p)
     if st not in ("running", "done", "approved"):
         err(400, "Hasil aktual hanya untuk promo yang sudah berjalan.")
-    sm = next(iter((p.get("summary") or {}).values()), {})
+    sm = aggregate_targets(p.get("summary") or {})
     a = {k: body.get(k) for k in ("units", "orders", "transactions", "revenue", "aov", "takeRate", "incRevenue",
                                   "merchantDiscount", "platformFees", "fixedCost", "repeat30d", "learningHeadline",
                                   "learning", "nextAction")}

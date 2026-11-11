@@ -134,7 +134,7 @@ BASELINES = {
     "offline_kios": {"bandung": {"gpPerTrx": 12650, "aovNormal": 25000, "trxPerOutletDay": 150, "outlets": 1, "openRate": 100},
                      "jakarta": {"gpPerTrx": 12650, "aovNormal": 25000, "trxPerOutletDay": 150, "outlets": 1, "openRate": 100}},
     "offline_gerobak": {"bandung": {"aovNormal": 15000, "trxPerOutletDay": 68, "outlets": 140, "openRate": 93},
-                        "jakarta": {"aovNormal": 15000, "trxPerOutletDay": 68, "outlets": 233, "openRate": 85}},
+                        "jakarta": {"aovNormal": 15000, "trxPerOutletDay": 68, "outlets": 358, "openRate": 83}},
 }
 
 
@@ -144,7 +144,8 @@ def history_promos():
          "platformProfileId": "offline_gerobak", "areas": ["bandung", "jakarta"], "periodStart": "2026-11-10",
          "periodEnd": "2026-12-31", "outlets": 498, "openRate": 85, "trxPerOutletDay": 68,
          "items": [{"productId": "mozza-b", "qty": 1}, {"productId": "mozza-k", "qty": 1}],
-         "params": {"packagePrice": 27000}, "areaParams": {"jakarta": {"packagePrice": 30000}},
+         "params": {"packagePrice": 27000},
+         "areaParams": {"bandung": {"outlets": 140, "openRate": 93}, "jakarta": {"packagePrice": 30000, "outlets": 358, "openRate": 83}},
          "segmentMix": [
              {"label": "Upgrade dari Mozza besar", "share": 50, "counterfactual": ["mozza-b"]},
              {"label": "Upgrade dari Mozza kecil", "share": 20, "counterfactual": ["mozza-k"]},

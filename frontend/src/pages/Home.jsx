@@ -8,7 +8,7 @@ export default function Home({ st, reload }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const promos = st.promos;
-  const sums = promos.flatMap((p) => Object.entries(p.summary || {}).map(([a, s]) => ({ ...s, area: a, p })));
+  const sums = promos.filter((p) => p.status !== "rejected").flatMap((p) => Object.entries(p.summary || {}).map(([a, s]) => ({ ...s, area: a, p })));
   const running = promos.filter((p) => p.effectiveStatus === "running");
   const pending = promos.filter((p) => ["review_finance", "review_head"].includes(p.status));
   const waiting = promos.filter((p) => p.waitingActual);

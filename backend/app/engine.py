@@ -276,8 +276,11 @@ def build_unit(promo: dict, products: dict, profile: dict, area: str) -> dict:
     paid_list = sum(x["list"] for x in rows if x["role"] != "free")
     extra_cost = 0  # mechanism cost not shown as price discount (stamp, voucher next visit, ongkir)
     extra_label = None
+    perceived = None  # customer-perceived saving for mechanisms without a price cut
     if mech in ("diskon_persen", "happy_hour"):
         d = float(prm.get("discountPct") or 0)
+        if not 0 <= d <= 100:
+            raise CalcError("Diskon harus di antara 0 dan 100%.")
         pay = r(list_total * (1 - d / 100))
     elif mech == "potongan_rp":
         pay = list_total - int(prm.get("offRp") or 0)
@@ -304,15 +307,18 @@ def build_unit(promo: dict, products: dict, profile: dict, area: str) -> dict:
         n = max(int(prm.get("n") or 5), 1)
         extra_cost = r(free["hpp"] * float(prm.get("completionRate") or 50) / 100 / n)
         extra_label = "Biaya stamp card"
+        perceived = r((list_price(free, profile, area) or 0) / n)
     elif mech == "voucher_next_visit":
         pay = list_total
         extra_cost = r(float(prm.get("voucherRp") or 0) * float(prm.get("redemptionRate") or 30) / 100)
         extra_label = "Biaya voucher kunjungan berikut"
+        perceived = r(float(prm.get("voucherRp") or 0))
     elif mech == "ongkir":
         pay = list_total
         upo = float((promo.get("overrides") or {}).get("avgUnitsPerOrder") or profile.get("avgUnitsPerOrder") or 1)
         extra_cost = r(float(prm.get("merchantOngkirRp") or 0) / upo)
         extra_label = "Subsidi ongkir merchant"
+        perceived = r((float(prm.get("merchantOngkirRp") or 0) + float(prm.get("platformOngkirRp") or 0)) / upo)
     else:
         raise CalcError("Mekanisme promo belum dipilih.")
     if pay < 0:
@@ -320,7 +326,7 @@ def build_unit(promo: dict, products: dict, profile: dict, area: str) -> dict:
     if pay > list_total:
         pay = list_total
     return {"rows": rows, "list": list_total, "pay": pay, "hpp": hpp, "offline": offline_total,
-            "discount": list_total - pay, "extraCost": extra_cost, "extraLabel": extra_label}
+            "discount": list_total - pay, "extraCost": extra_cost, "extraLabel": extra_label, "perceived": perceived}
 
 
 def _units_per_order(promo: dict, profile: dict) -> float:
@@ -417,6 +423,7 @@ def calc(promo: dict, products: dict, profile: dict, area: str, settings: dict |
         "breakevenUplift": breakeven, "cmVsBaseline": cm_vs_base,
         "cmVsOffline": pct(cm, off_cm) if off_cm else None, "offlineCM": off_cm,
         "outletPrice": u["offline"], "unitsPerOrder": upo, "pendingPrograms": s["pendingPrograms"],
+        "perceivedSaving": u["perceived"] if u["perceived"] is not None else u["discount"],
     }
 
     # incremental model
@@ -536,6 +543,8 @@ def scenarios(promo, unit, inc, baseline, profile):
     for k in ("pesimis", "target", "optimis"):
         si = {**defaults[k], **(sc_in.get(k) or {})}
         tr = float(si["takeRate"]) / 100
+        if promo.get("mechanism") == "happy_hour":
+            tr *= float((promo.get("params") or {}).get("hourShare") or 100) / 100
         up = float(si["trafficUplift"]) / 100
         units = trx * (1 + up) * tr
         if quota:
@@ -669,10 +678,10 @@ def attract_score(promo, unit, u, settings, profile, mech, history):
     def add(key, label, weight, score, note):
         comps.append({"key": key, "label": label, "weight": weight, "score": score, "note": note})
 
-    hp = unit["discountPct"] * 100
+    hr = unit["perceivedSaving"]
+    hp = pct(hr, unit["listPrice"]) * 100
     add("hematPct", "Hemat %", 25, 20 if hp < 5 else 50 if hp < 10 else 80 if hp < 20 else 100 if hp <= 35 else 85,
-        f"Hemat {hp:.1f}%")
-    hr = unit["discountTotal"]
+        f"Hemat {hp:.1f}%" + ("" if hr == unit["discountTotal"] else " (nilai yang dirasakan customer)"))
     add("hematRp", "Hemat Rp", 15, 20 if hr < 1000 else 50 if hr < 3000 else 80 if hr < 5000 else 100,
         f"Hemat Rp{hr:,}".replace(",", "."))
     price = unit["customerPays"]
@@ -701,11 +710,11 @@ def attract_score(promo, unit, u, settings, profile, mech, history):
             and h.get("takeRate") is not None]
     final = rule
     if len(hist) >= 3:
-        rates = sorted(h["takeRate"] for h in hist)
+        # actual take rate of this mechanism on this platform vs the take rate the plan assumes
+        avg_actual = sum(h["takeRate"] for h in hist) / len(hist)
         target_tr = float(((promo.get("scenarioInputs") or {}).get("target") or {}).get("takeRate") or 10)
-        below = sum(1 for x in rates if x <= target_tr)
-        pctl = below / len(rates) * 100
-        final = 0.6 * rule + 0.4 * pctl
+        hist_score = max(0.0, min(100.0, avg_actual / target_tr * 80)) if target_tr else 50.0
+        final = 0.6 * rule + 0.4 * hist_score
         calibrated = len(hist)
     return {"score": round(final), "label": _label(final, 70, 50, ("Menarik", "Cukup", "Kurang")),
             "components": comps, "calibratedFrom": calibrated, "fit": fl}
@@ -880,9 +889,20 @@ def prepare_promo(promo: dict, products: dict) -> dict:
 
 
 def run(promo, products, profile, area, settings=None, baseline=None, history=None, light=False):
-    ap = (promo.get("areaParams") or {}).get(area)
+    try:
+        return _run(promo, products, profile, area, settings, baseline, history, light)
+    except (ValueError, TypeError) as e:
+        if isinstance(e, CalcError):
+            raise
+        raise CalcError("Ada isian angka yang tidak valid. Periksa harga, diskon, dan jumlah.") from e
+
+
+def _run(promo, products, profile, area, settings=None, baseline=None, history=None, light=False):
+    ap = dict((promo.get("areaParams") or {}).get(area) or {})
     if ap:
-        promo = {**promo, "params": {**(promo.get("params") or {}), **ap}}
+        top = {k: ap.pop(k) for k in ("outlets", "openRate", "trxPerOutletDay", "quotaPerOutletDay", "capacityPerOutletDay") if k in ap}
+        top = {k: v for k, v in top.items() if v not in (None, "")}
+        promo = {**promo, **top, "params": {**(promo.get("params") or {}), **ap}}
     return calc(prepare_promo(promo, products), products, profile, area, settings, baseline, history, light)
 
 

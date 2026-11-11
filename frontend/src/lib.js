@@ -44,7 +44,7 @@ export const TONE_HEX = { ok: "#2F6B4A", warn: "#B8741A", bad: "#B42F27", none: 
 export const toneOf = (label) => LABEL_TONE[label] || "none";
 
 export const STATUS = {
-  draft: "Draft", review_finance: "Review Finance", review_head: "Review Head", approved: "Approved",
+  draft: "Draft", review_finance: "Review Finance", review_head: "Review Manager", approved: "Approved",
   running: "Running", done: "Selesai", rejected: "Ditolak",
 };
 
