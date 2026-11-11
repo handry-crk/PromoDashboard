@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { -webkit-tap-highlight-color: transparent; }
+  body { font-feature-settings: "tnum" 1, "ss01" 1; }
+  input, select, textarea { font-size: 16px; }
+  :focus-visible { outline: 2.5px solid #B42F27; outline-offset: 2px; border-radius: 10px; }
+}
+
+@layer components {
+  .card { @apply bg-paper rounded-[22px] border border-line; }
+  .field { @apply w-full rounded-xl border border-line bg-white/70 px-3 py-2.5 text-[16px] text-ink outline-none transition focus:border-bata focus:bg-white; }
+  .lbl { @apply block text-[13px] font-semibold text-ink/70 mb-1; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-full px-4 min-h-[44px] text-[15px] font-semibold transition active:scale-[.97] disabled:opacity-50; }
+  .btn-primary { @apply btn bg-bata text-cream hover:bg-bata-dark; }
+  .btn-ghost { @apply btn border border-bata/60 text-bata hover:bg-blush; }
+  .btn-soft { @apply btn bg-blush text-bata hover:bg-tint; }
+  .pill { @apply inline-flex items-center gap-1 rounded-full border border-bata/70 px-2.5 py-0.5 text-[12px] font-semibold text-bata whitespace-nowrap; }
+  .th { @apply bg-bata text-cream font-bold text-left text-[13px] px-3 py-2; }
+  .td { @apply px-3 py-2 text-[14px] border-b border-line; }
+  .title { @apply text-[22px] leading-tight; }
+  .title b { @apply font-extrabold; }
+}
+
+.num { font-variant-numeric: tabular-nums; }
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.safe-b { padding-bottom: max(env(safe-area-inset-bottom), 8px); }
+.grain { background-image: radial-gradient(rgba(180,47,39,.07) 1px, transparent 1.2px); background-size: 14px 14px; }
+
+@keyframes wobble { 0%,100% { transform: translateX(0) } 20% { transform: translateX(-6px) rotate(-2deg) } 40% { transform: translateX(6px) rotate(2deg) } 60% { transform: translateX(-4px) } 80% { transform: translateX(3px) } }
+.wobble { animation: wobble .55s ease-in-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
