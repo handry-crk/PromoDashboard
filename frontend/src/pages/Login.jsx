@@ -12,8 +12,11 @@ const BALLS = [
 export default function Login({ onIn }) {
   const [mode, setMode] = useState("login");
   const [info, setInfo] = useState({ members: [], roles: {}, hasAny: true });
-  const [f, setF] = useState({ memberId: "", pin: "", name: "", role: "planner", email: "", phone: "" });
+  const [f, setF] = useState({ memberId: "", pin: "", name: "", role: "", email: "", phone: "" });
   const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(null);
+  const openSlots = (info.slots || []).filter((s) => s.open);
+  const role = openSlots.some((s) => s.role === f.role) ? f.role : openSlots[0]?.role || "";
   const toast = useToast();
 
   useEffect(() => {
@@ -27,7 +30,8 @@ export default function Login({ onIn }) {
       let r;
       if (mode === "login") r = await api("/auth/login", { method: "POST", body: { memberId: f.memberId, pin: f.pin } });
       else if (mode === "admin") r = await api("/auth/admin-login", { method: "POST", body: { pin: f.pin } });
-      else r = await api("/auth/register", { method: "POST", body: { name: f.name, role: f.role, email: f.email, phone: f.phone, pin: f.pin } });
+      else r = await api("/auth/register", { method: "POST", body: { name: f.name, role, email: f.email, phone: f.phone, pin: f.pin } });
+      if (r.pending) { setSent(r.message); return; }
       setToken(r.token);
       onIn();
     } catch (err) { toast(err.message, "bad"); }
@@ -64,6 +68,17 @@ export default function Login({ onIn }) {
       </section>
 
       <section className="px-6 py-10 md:p-14 flex items-center">
+        {sent ? (
+          <motion.div className="w-full max-w-sm mx-auto text-center" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+            <motion.svg width="96" height="96" viewBox="0 0 100 100" className="mx-auto" animate={{ rotate: [0, -6, 6, 0] }} transition={{ duration: 2, repeat: Infinity }}>
+              <circle cx="50" cy="50" r="44" fill="#B8741A" /><circle cx="38" cy="42" r="5" fill="#212121" /><circle cx="62" cy="42" r="5" fill="#212121" />
+              <path d="M36 63 Q50 64 64 63" stroke="#212121" strokeWidth="3.4" fill="none" strokeLinecap="round" />
+            </motion.svg>
+            <div className="text-[20px] font-extrabold mt-3">Menunggu approval</div>
+            <p className="text-[15px] text-ink/70 mt-1">{sent}</p>
+            <button className="btn-ghost mt-5" onClick={() => { setSent(null); setMode("login"); }}>Kembali ke login</button>
+          </motion.div>
+        ) : (
         <form onSubmit={submit} className="w-full max-w-sm mx-auto">
           <div className="flex gap-1 p-1 rounded-full bg-paper border border-line mb-6">
             {[["login", "Login"], ["register", "Daftar"], ["admin", "PIN Admin"]].map(([k, l]) => (
@@ -75,7 +90,7 @@ export default function Login({ onIn }) {
             ))}
           </div>
           {!info.hasAny && mode === "register" && (
-            <div className="card p-3 text-[13px] mb-4">Belum ada anggota. Orang pertama yang daftar otomatis menjadi <b>Admin (Marketing Head)</b>.</div>
+            <div className="card p-3 text-[13px] mb-4">Belum ada anggota. Orang pertama yang daftar otomatis menjadi <b>Admin (Marketing Manager)</b>.</div>
           )}
           <div className="space-y-4">
             {mode === "login" && (
@@ -87,25 +102,39 @@ export default function Login({ onIn }) {
                 </select>
               </div>
             )}
-            {mode === "register" && (<>
+            {mode === "register" && info.hasAny && !openSlots.length && (
+              <div className="card p-3 text-[14px]">Semua slot pendaftaran sudah terisi. Hubungi Marketing Manager bila perlu akses.</div>
+            )}
+            {mode === "register" && (info.hasAny ? openSlots.length > 0 : true) && (<>
               <div><label className="lbl" htmlFor="n">Nama lengkap</label><input id="n" className="field" value={f.name} onChange={set("name")} required /></div>
-              <div><label className="lbl" htmlFor="r">Role</label>
-                <select id="r" className="field" value={f.role} onChange={set("role")}>
-                  {Object.entries(info.roles || {}).filter(([k]) => k !== "head" || !info.hasAny).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="lbl" htmlFor="e">Email</label><input id="e" type="email" className="field" value={f.email} onChange={set("email")} /></div>
-                <div><label className="lbl" htmlFor="w">WhatsApp</label><input id="w" inputMode="tel" placeholder="08…" className="field" value={f.phone} onChange={set("phone")} /></div>
-              </div>
+              {info.hasAny && (
+                <div><span className="lbl">Daftar sebagai</span>
+                  <div className="grid gap-2">
+                    {(info.slots || []).map((s) => (
+                      <button type="button" key={s.role} disabled={!s.open} onClick={() => setF({ ...f, role: s.role })}
+                        className={`flex items-center justify-between rounded-2xl border px-4 min-h-[48px] text-[14px] font-semibold disabled:opacity-45 ${role === s.role ? "border-bata bg-blush text-bata" : "border-line bg-white/60"}`}>
+                        <span>{s.label}</span><span className="text-[12px]">{s.open ? `${s.quota - s.used} slot tersedia` : "Sudah terisi"}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div><label className="lbl" htmlFor="e">Email kantor</label>
+                <input id="e" type="email" className="field" placeholder={`nama@${info.emailDomain || "citarasakuliner.com"}`} value={f.email} onChange={set("email")} required
+                  pattern={`^[^@\\s]+@${(info.emailDomain || "citarasakuliner.com").replace(/\./g, "\\.")}$`} title={`Wajib email @${info.emailDomain || "citarasakuliner.com"}`} /></div>
+              <div><label className="lbl" htmlFor="w">WhatsApp</label><input id="w" inputMode="tel" placeholder="08…" className="field" value={f.phone} onChange={set("phone")} /></div>
+              {info.hasAny && <p className="text-[12px] text-ink/60">Akun aktif setelah disetujui Marketing Manager.</p>}
             </>)}
             <div>
               <label className="lbl" htmlFor="p">{mode === "admin" ? "PIN Admin" : "PIN (4–6 angka)"}</label>
               <input id="p" className="field tracking-[.4em] text-center text-[20px] font-bold" type="password" inputMode="numeric" maxLength={6}
                 value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, "") })} required />
             </div>
-            <button className="btn-primary w-full" disabled={busy}>{busy ? "Memeriksa…" : mode === "register" ? "Daftar & masuk" : "Masuk"}</button>
+            <button className="btn-primary w-full" disabled={busy || (mode === "register" && info.hasAny && !openSlots.length)}>
+              {busy ? "Memeriksa…" : mode === "register" ? (info.hasAny ? "Kirim pendaftaran" : "Daftar & masuk") : "Masuk"}</button>
           </div>
         </form>
+        )}
       </section>
     </div>
   );

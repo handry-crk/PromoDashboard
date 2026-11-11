@@ -20,7 +20,7 @@ export default function Platforms({ st, reload }) {
   const [edit, setEdit] = useState(null);
   const [sim, setSim] = useState(null);
   const u = st.user;
-  const canEdit = (p) => u.isAdmin || ["finance", "head"].includes(u.role) || (u.role === "channel_pic" && (u.platforms || []).includes(p.id));
+  const canEdit = (p) => u.isAdmin || ["finance", "head"].includes(u.perm) || (u.perm === "channel_pic" && (u.platforms || []).includes(p.id));
 
   const save = async () => {
     try { const { id, ...body } = edit; await api(`/platform-profiles/${id}`, { method: "PUT", body }); toast("Profil tersimpan — perlu divalidasi ulang"); setEdit(null); reload(); }
@@ -70,7 +70,7 @@ export default function Platforms({ st, reload }) {
                   <div className="flex flex-wrap gap-2 mt-3">
                     {g !== "offline" && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => setSim({ profileId: p.id, items: [{ productId: st.products.find((x) => (x.channels || []).includes(p.productChannel))?.id, qty: 1 }], discountPct: 0, merchantPct: 100, area: "jakarta", res: null })}><Calculator size={15} />Simulasi 1 order</button>}
                     {canEdit(p) && !p.verified && <button className="btn-ghost !min-h-[38px] !text-[13px]" onClick={() => verify(p)}><ShieldCheck size={15} />Tandai divalidasi</button>}
-                    {(u.isAdmin || ["finance", "head"].includes(u.role)) && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => dup(p)}><Dup size={15} />Duplikat</button>}
+                    {(u.isAdmin || ["finance", "head"].includes(u.perm)) && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => dup(p)}><Dup size={15} />Duplikat</button>}
                   </div>
                 </motion.div>
               );

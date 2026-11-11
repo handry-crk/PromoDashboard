@@ -8,7 +8,7 @@ import { go } from "../App";
 
 const FLOW = ["draft", "review_finance", "review_head", "approved", "running", "done"];
 const ACT = { create: "Dibuat", recalc: "Dihitung ulang", submit: "Diajukan ke Finance", review_ok: "Lolos review Finance", return: "Dikembalikan Finance",
-  approve: "Disetujui Marketing Head", reject: "Ditolak", actual_input: "Hasil aktual diisi", edit: "Diubah" };
+  approve: "Disetujui Marketing Manager", reject: "Ditolak", actual_input: "Hasil aktual diisi", edit: "Diubah" };
 
 export default function PromoDetail({ st, reload, id }) {
   const toast = useToast();
@@ -19,7 +19,7 @@ export default function PromoDetail({ st, reload, id }) {
   const [comment, setComment] = useState("");
   const [act, setAct] = useState({});
   const u = st.user;
-  const can = (...r) => u.isAdmin || r.includes(u.role);
+  const can = (...r) => u.isAdmin || r.includes(u.perm);
 
   const load = async () => {
     try { const d = await api(`/promos/${id}`); setP(d); setArea((a) => a || Object.keys(d.results || {})[0]); setAct(d.actual || {}); }
@@ -185,7 +185,7 @@ export default function PromoDetail({ st, reload, id }) {
         </section>
       </div>
 
-      <Sheet open={!!dlg} onClose={() => setDlg(null)} title={dlg === "review" ? "Review margin (Finance)" : "Keputusan Marketing Head"}>
+      <Sheet open={!!dlg} onClose={() => setDlg(null)} title={dlg === "review" ? "Review margin (Finance)" : "Keputusan Marketing Manager"}>
         <textarea className="field min-h-[100px]" placeholder="Catatan (wajib bila dikembalikan/ditolak)" value={note} onChange={(e) => setNote(e.target.value)} />
         <div className="flex flex-wrap gap-2 mt-3">
           {dlg === "review" ? (<>

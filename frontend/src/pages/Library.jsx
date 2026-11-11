@@ -15,7 +15,7 @@ export default function Library({ st }) {
     (!q || `${p.nama} ${p.kode}`.toLowerCase().includes(q.toLowerCase())) &&
     (!status || p.effectiveStatus === status) && (!plat || p.platformProfileId === plat)), [st.promos, q, status, plat]);
   const toggle = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= 3 ? s : [...s, id]));
-  const canExport = st.user.isAdmin || ["head", "finance"].includes(st.user.role);
+  const canExport = st.user.isAdmin || ["head", "finance"].includes(st.user.perm);
 
   return (
     <div>

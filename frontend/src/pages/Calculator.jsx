@@ -85,7 +85,7 @@ export default function Calculator({ st, reload, promoId }) {
   const P = useMemo(() => Object.fromEntries(st.products.map((p) => [p.id, p])), [st.products]);
   const profiles = st.profiles;
   const prof = profiles.find((p) => p.id === promo?.platformProfileId);
-  const canEdit = st.user.isAdmin || ["planner", "channel_pic", "head"].includes(st.user.role);
+  const canEdit = st.user.isAdmin || ["planner", "channel_pic", "head"].includes(st.user.perm);
 
   useEffect(() => {
     (async () => {

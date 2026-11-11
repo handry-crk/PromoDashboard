@@ -32,14 +32,16 @@ pytest -q backend/tests                    # jalankan dari folder backend
    - `TZ=Asia/Jakarta`
 3. Hostinger → hPanel → Domains → `crkgroup.app` → DNS Zone → tambah CNAME `promo` → alamat dari Railway (Settings → Networking → Custom Domain).
 4. Buka `https://promo.crkgroup.app/api/health`. Harus muncul `"db":"mongo"`.
-5. Marketing Head daftar pertama (otomatis jadi Admin) → klik **Import data CRK**.
+5. Marketing Manager daftar pertama (otomatis jadi Admin) → klik **Import data CRK**.
 6. Finance cek **Produk & HPP**. PIC Delivery/Marketplace cocokkan **Platform & Biaya** dengan Merchant/Seller Center, lalu klik **Tandai divalidasi**.
 7. Settings → Copy link Reporting → bagikan ke Direksi.
 
 ## Role
 | Role | Bisa |
 |---|---|
-| Marketing Head (Admin) | Semua akses + keputusan akhir + Settings |
+| Marketing Manager (Admin) | Semua akses + keputusan akhir + approval anggota + Settings |
+| Marketing Team Leader (1 slot) | Sama dengan Promo Planner |
+| Revenue Growth Specialist (1 slot) | Sama dengan Finance: review margin, HPP, biaya platform |
 | Promo Planner | Hitung, simpan, ajukan, isi hasil aktual |
 | Finance | Ubah HPP/harga dan profil biaya platform, review margin |
 | Channel PIC | Ubah profil platform yang dia pegang, buat promo channel-nya |
@@ -50,3 +52,9 @@ pytest -q backend/tests                    # jalankan dari folder backend
 - Biaya pembayaran QRIS di profil Offline default 0%. Isi di Platform & Biaya bila ingin ikut dihitung.
 - Kalkulator memanggil `/api/calc` dengan jeda 260 ms setiap kali form berubah, bukan memakai salinan rumus di JavaScript, supaya angka selalu satu sumber.
 - Hasil aktual: contribution dihitung dari tambahan revenue × rasio CM/revenue skenario Target − biaya tetap aktual (estimasi). Untuk angka persis, isi potongan platform dari laporan settlement.
+
+## Pendaftaran anggota
+- Pendaftaran mandiri hanya untuk 2 slot: **Marketing Team Leader** (1) dan **Revenue Growth Specialist** (1). Slot yang sudah terisi atau menunggu approval tidak bisa dipakai lagi. Kalau pendaftaran ditolak, slotnya terbuka kembali.
+- Email wajib `@citarasakuliner.com`. Domain bisa diganti lewat env `EMAIL_DOMAIN`.
+- Akun baru berstatus **menunggu** dan tidak bisa login sampai disetujui di **Settings → Approval anggota baru**.
+- Role lain (Promo Planner, Finance, Channel PIC, Viewer) hanya bisa diberikan Marketing Manager lewat daftar Anggota.

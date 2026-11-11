@@ -13,7 +13,7 @@ export default function Products({ st, reload }) {
   const [edit, setEdit] = useState(null);
   const [hist, setHist] = useState(null);
   const [q, setQ] = useState("");
-  const canEdit = st.user.isAdmin || ["finance", "head"].includes(st.user.role);
+  const canEdit = st.user.isAdmin || ["finance", "head"].includes(st.user.perm);
   const groups = useMemo(() => {
     const g = {};
     st.products.filter((p) => !q || p.nama.toLowerCase().includes(q.toLowerCase())).forEach((p) => { (g[p.kategori] = g[p.kategori] || []).push(p); });

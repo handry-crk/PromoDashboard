@@ -11,11 +11,27 @@ def H(t):
 def test_flow():
     for col in db.list_collection_names():
         db[col].drop()
-    r = c.post("/api/auth/register", json={"name": "Handry", "role": "viewer", "pin": "1234"})
+    assert c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@gmail.com"}).status_code == 400
+    r = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"})
     assert r.status_code == 200 and r.json()["user"]["isAdmin"] and r.json()["user"]["role"] == "head"
     ha = r.json()["token"]
-    fi = c.post("/api/auth/register", json={"name": "Fina", "role": "finance", "pin": "2222"}).json()["token"]
-    pl = c.post("/api/auth/register", json={"name": "Sinta", "role": "planner", "pin": "3333"}).json()["token"]
+    # only the two slots are open, finance is not
+    assert c.post("/api/auth/register", json={"name": "X", "role": "finance", "pin": "1111", "email": "x@citarasakuliner.com"}).status_code == 400
+    r = c.post("/api/auth/register", json={"name": "Fina", "role": "revenue_growth", "pin": "2222", "email": "fina@citarasakuliner.com"}).json()
+    assert r["pending"]
+    r = c.post("/api/auth/register", json={"name": "Sinta", "role": "team_leader", "pin": "3333", "email": "sinta@citarasakuliner.com"}).json()
+    assert r["pending"]
+    # slot full
+    assert "sudah terisi" in c.post("/api/auth/register", json={"name": "Budi", "role": "team_leader", "pin": "4444", "email": "budi@citarasakuliner.com"}).json()["detail"]
+    pub = c.get("/api/public/members").json()
+    assert [m["name"] for m in pub["members"]] == ["Handry"] and not any(s["open"] for s in pub["slots"])
+    ids = {m["name"]: m["id"] for m in c.get("/api/state", headers=H(ha)).json()["members"]}
+    assert c.post("/api/auth/login", json={"memberId": ids["Sinta"], "pin": "3333"}).status_code == 403
+    for n in ("Fina", "Sinta"):
+        assert c.post(f"/api/members/{ids[n]}/approve", headers=H(ha), json={"decision": "approve"}).status_code == 200
+    fi = c.post("/api/auth/login", json={"memberId": ids["Fina"], "pin": "2222"}).json()["token"]
+    pl = c.post("/api/auth/login", json={"memberId": ids["Sinta"], "pin": "3333"}).json()["token"]
+    assert c.get("/api/state", headers=H(pl)).json()["user"]["perm"] == "planner"
     assert c.post("/api/seed/crk", headers=H(ha)).status_code == 200
     st = c.get("/api/state", headers=H(ha)).json()
     assert len(st["products"]) == 39 and len(st["promos"]) == 3
@@ -60,7 +76,7 @@ def test_flow():
     assert rep["promos"] and "hpp" not in str(rep).lower() and "cm" not in rep["promos"][0]["areas"].get("bandung", {})
     assert c.get("/api/report?t=salah").status_code == 404
     # PIN lock
-    mid = [m for m in c.get("/api/public/members").json()["members"] if m["name"] == "Sinta"][0]["id"]
+    mid = ids["Sinta"]
     for _ in range(5):
         c.post("/api/auth/login", json={"memberId": mid, "pin": "0000"})
     assert c.post("/api/auth/login", json={"memberId": mid, "pin": "3333"}).status_code == 429

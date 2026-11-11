@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { Copy, RefreshCw, KeyRound } from "lucide-react";
 import { api, CH_LABEL } from "../lib";
 import { Title, useToast, Sheet } from "../ui";
@@ -14,7 +15,7 @@ export default function Settings({ st, reload }) {
   });
   const [bl, setBl] = useState({ platformId: "offline_kios", area: "bandung" });
   const [pin, setPin] = useState(null);
-  const isAdmin = st.user.isAdmin || st.user.role === "head";
+  const isAdmin = st.user.isAdmin || st.user.perm === "head";
   const link = `${window.location.origin}/laporan?t=${s.shareToken}`;
   const baseline = ((s.baselines || {})[bl.platformId] || {})[bl.area] || {};
   const [b, setB] = useState(null);
@@ -29,17 +30,35 @@ export default function Settings({ st, reload }) {
     catch (e) { toast(e.message, "bad"); }
   };
   const member = async (m, patch) => { try { await api(`/members/${m.id}`, { method: "PUT", body: patch }); reload(); } catch (e) { toast(e.message, "bad"); } };
+  const decide = async (m, decision) => {
+    try { await api(`/members/${m.id}/approve`, { method: "POST", body: { decision } }); toast(decision === "approve" ? `${m.name} disetujui` : `Pendaftaran ${m.name} ditolak`); reload(); }
+    catch (e) { toast(e.message, "bad"); }
+  };
+  const pending = st.members.filter((m) => m.status === "pending");
   const resetPin = async () => {
     try { await api(`/members/${pin.id}/reset-pin`, { method: "POST", body: { pin: pin.pin } }); toast(`PIN ${pin.name} direset`); setPin(null); }
     catch (e) { toast(e.message, "bad"); }
   };
 
-  if (!isAdmin) return <div className="card p-6">Settings hanya untuk Marketing Head / Admin.</div>;
+  if (!isAdmin) return <div className="card p-6">Settings hanya untuk Marketing Manager / Admin.</div>;
   const n = (k, label, props) => <div><label className="lbl">{label}</label><NumInput value={f[k]} onChange={(v) => setF({ ...f, [k]: v })} {...props} /></div>;
 
   return (
     <div className="space-y-5">
       <Title a="Settings" b="dashboard" />
+      <section className="card p-4">
+        <div className="font-extrabold mb-1">Approval anggota baru</div>
+        <p className="text-[13px] text-ink/60 mb-3">Slot pendaftaran: {(st.slots || []).map((s) => `${s.label} ${s.used}/${s.quota}`).join(" · ")}. Wajib email @{st.emailDomain}.</p>
+        {pending.length ? pending.map((m) => (
+          <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-blush px-3 py-2.5 mb-2">
+            <div><div className="font-bold">{m.name} <span className="pill ml-1">{st.roles[m.role]}</span></div><div className="text-[12px] text-ink/60">{m.email} {m.phone}</div></div>
+            <div className="flex gap-2">
+              <button className="btn-primary !min-h-[38px]" onClick={() => decide(m, "approve")}>Setujui</button>
+              <button className="btn-ghost !min-h-[38px]" onClick={() => decide(m, "reject")}>Tolak</button>
+            </div>
+          </motion.div>
+        )) : <div className="text-[14px] text-ink/55">Tidak ada pendaftaran yang menunggu.</div>}
+      </section>
       <section className="card p-4">
         <div className="font-extrabold mb-2">Link Reporting (tanpa login)</div>
         <div className="flex flex-col sm:flex-row gap-2">
@@ -92,7 +111,7 @@ export default function Settings({ st, reload }) {
       <section className="card p-4">
         <div className="font-extrabold mb-3">Anggota</div>
         <div className="space-y-2">
-          {st.members.map((m) => (
+          {st.members.filter((m) => m.status !== "pending").map((m) => (
             <div key={m.id} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_220px_200px_auto] gap-2 items-center rounded-2xl bg-cream/60 px-3 py-2">
               <div><div className="font-bold">{m.name}{m.isAdmin && <span className="pill ml-2">Admin</span>}</div><div className="text-[12px] text-ink/55">{m.email} {m.phone}</div></div>
               <select className="field !py-1.5" value={m.role} onChange={(e) => member(m, { role: e.target.value })} aria-label={`Role ${m.name}`}>

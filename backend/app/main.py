@@ -48,12 +48,33 @@ for k, v, d in (("SECRET_KEY", SECRET_KEY, "change-me"), ("DEFAULT_ADMIN_PIN", D
         log.warning("%s masih memakai nilai bawaan — ganti di environment variables Railway.", k)
 
 ROLES = {
-    "head": "Marketing Head",
+    "head": "Marketing Manager",
+    "team_leader": "Marketing Team Leader",
+    "revenue_growth": "Revenue Growth Specialist",
     "planner": "Promo Planner / Marketing",
     "finance": "Finance",
     "channel_pic": "Channel PIC (Delivery / Marketplace)",
     "viewer": "Viewer",
 }
+
+# Hak akses: role baru memakai hak role dasar
+PERM_ALIAS = {"team_leader": "planner", "revenue_growth": "finance"}
+# Slot pendaftaran mandiri (role → kuota). Role lain hanya bisa diberikan Marketing Manager.
+SIGNUP_SLOTS = {"team_leader": 1, "revenue_growth": 1}
+EMAIL_DOMAIN = os.getenv("EMAIL_DOMAIN", "citarasakuliner.com").lower().lstrip("@")
+
+
+def perm_of(role: str) -> str:
+    return PERM_ALIAS.get(role, role)
+
+
+def slot_status():
+    out = []
+    for role, quota in SIGNUP_SLOTS.items():
+        used = db.members.count_documents({"role": role, "status": {"$in": ["pending", "approved"]}, "active": {"$ne": False}})
+        out.append({"role": role, "label": ROLES[role], "quota": quota, "used": used, "open": used < quota})
+    return out
+
 
 app = FastAPI(title="CRK Promo Calculator")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "*").split(","), allow_credentials=True,
@@ -144,14 +165,16 @@ def current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not s:
         err(401, "Sesi berakhir. Silakan login lagi.")
     m = db.members.find_one({"id": s["memberId"]})
-    if not m or not m.get("active", True):
-        err(401, "Akun tidak aktif. Hubungi Admin.")
-    return clean(m)
+    if not m or not m.get("active", True) or m.get("status", "approved") != "approved":
+        err(401, "Akun tidak aktif atau belum disetujui Marketing Manager.")
+    m = clean(m)
+    m["perm"] = perm_of(m["role"])
+    return m
 
 
 def require(*roles):
     def dep(user=Depends(current_user)):
-        if user.get("isAdmin") or user["role"] in roles:
+        if user.get("isAdmin") or user["perm"] in roles:
             return user
         err(403, "Akses ditolak untuk role Anda.")
     return dep
@@ -280,29 +303,42 @@ def health():
 
 @app.get("/api/public/members")
 def public_members():
-    ms = [{"id": m["id"], "name": m["name"], "role": m["role"]} for m in db.members.find({"active": {"$ne": False}})]
-    return {"members": sorted(ms, key=lambda x: x["name"]), "roles": ROLES, "hasAny": db.members.count_documents({}) > 0}
+    ms = [{"id": m["id"], "name": m["name"], "role": m["role"]} for m in db.members.find({"active": {"$ne": False}, "hidden": {"$ne": True}})
+          if m.get("status", "approved") == "approved"]
+    return {"members": sorted(ms, key=lambda x: x["name"]), "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN,
+            "hasAny": db.members.count_documents({"hidden": {"$ne": True}}) > 0}
 
 
 @app.post("/api/auth/register")
 def register(body: dict):
     name = (body.get("name") or "").strip()
     pin = str(body.get("pin") or "")
-    role = body.get("role") or "viewer"
+    role = body.get("role") or ""
+    email = (body.get("email") or "").strip().lower()
     if not name:
         err(400, "Isi nama lengkap.")
+    if not email.endswith("@" + EMAIL_DOMAIN) or email.count("@") != 1 or len(email) <= len(EMAIL_DOMAIN) + 1:
+        err(400, f"Gunakan email kantor @{EMAIL_DOMAIN}.")
     if not (pin.isdigit() and 4 <= len(pin) <= 6):
         err(400, "PIN harus 4–6 angka.")
-    if role not in ROLES:
-        err(400, "Pilih role yang tersedia.")
-    if db.members.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}}):
+    if db.members.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}, "status": {"$ne": "rejected"}}):
         err(400, "Nama sudah terdaftar. Pilih nama Anda di halaman login.")
-    first = db.members.count_documents({}) == 0
-    m = {"id": secrets.token_hex(6), "name": name, "role": "head" if first else role, "email": body.get("email", ""),
+    if db.members.find_one({"email": email, "status": {"$ne": "rejected"}}):
+        err(400, "Email ini sudah terdaftar.")
+    first = db.members.count_documents({"hidden": {"$ne": True}}) == 0
+    if not first:
+        slot = next((x for x in slot_status() if x["role"] == role), None)
+        if not slot:
+            err(400, "Pilih slot yang tersedia: " + ", ".join(ROLES[k] for k in SIGNUP_SLOTS) + ".")
+        if not slot["open"]:
+            err(400, f"Slot {slot['label']} sudah terisi. Hubungi Marketing Manager.")
+    m = {"id": secrets.token_hex(6), "name": name, "role": "head" if first else role, "email": email,
          "phone": body.get("phone", ""), "pinHash": hash_pin(pin), "active": True, "isAdmin": first,
-         "platforms": body.get("platforms") or [], "createdAt": now_iso()}
+         "status": "approved" if first else "pending", "platforms": [], "createdAt": now_iso()}
     db.members.insert_one(m)
     get_settings()
+    if not first:
+        return {"pending": True, "message": f"Pendaftaran {ROLES[role]} terkirim. Anda bisa login setelah disetujui Marketing Manager."}
     return {"token": make_session(m), "user": {k: v for k, v in clean(m).items() if k != "pinHash"}}
 
 
@@ -314,6 +350,10 @@ def login(body: dict):
     m = db.members.find_one({"id": mid})
     if not m or not m.get("active", True):
         err(404, "Nama tidak ditemukan.")
+    if m.get("status", "approved") == "pending":
+        err(403, "Akun Anda masih menunggu approval Marketing Manager.")
+    if m.get("status") == "rejected":
+        err(403, "Pendaftaran Anda ditolak. Hubungi Marketing Manager.")
     if not check_pin(str(body.get("pin") or ""), m["pinHash"]):
         fail(key)
         left = 5 - len(FAILS.get(key, []))
@@ -363,8 +403,9 @@ def state(user=Depends(current_user)):
     promos = [promo_view(p) for p in db.promos.find({}).sort("createdAt", -1)]
     members = []
     if user.get("isAdmin"):
-        members = [{k: v for k, v in clean(m).items() if k != "pinHash"} for m in db.members.find({"hidden": {"$ne": True}})]
-    return {"user": user, "roles": ROLES, "settings": public_settings(s),
+        members = [{**{k: v for k, v in clean(m).items() if k != "pinHash"}, "status": m.get("status", "approved")}
+                   for m in db.members.find({"hidden": {"$ne": True}, "status": {"$ne": "rejected"}})]
+    return {"user": user, "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN, "settings": public_settings(s),
             "products": [enrich_product(p, s) for p in products_map().values()],
             "profiles": list(profiles_map().values()), "promos": promos, "members": members,
             "mechanisms": E.MECHANISMS, "objectives": E.OBJECTIVES, "empty": db.products.count_documents({}) == 0}
@@ -656,8 +697,8 @@ def edit_product(pid: str, body: dict, user=Depends(current_user)):
     p = db.products.find_one({"id": pid})
     if not p:
         err(404, "Produk tidak ditemukan.")
-    if not (user.get("isAdmin") or user["role"] in ("finance", "head")):
-        if user["role"] == "channel_pic" and set(body.keys()) <= {"platformPrices"}:
+    if not (user.get("isAdmin") or user["perm"] in ("finance", "head")):
+        if user["perm"] == "channel_pic" and set(body.keys()) <= {"platformPrices"}:
             pass
         else:
             err(403, "Hanya Finance yang bisa mengubah HPP dan harga.")
@@ -698,9 +739,9 @@ async def import_products(request: Request, user=Depends(require("finance", "hea
 
 
 def can_edit_profile(user, prof):
-    if user.get("isAdmin") or user["role"] in ("finance", "head"):
+    if user.get("isAdmin") or user["perm"] in ("finance", "head"):
         return True
-    return user["role"] == "channel_pic" and prof["id"] in (user.get("platforms") or [])
+    return user["perm"] == "channel_pic" and prof["id"] in (user.get("platforms") or [])
 
 
 @app.post("/api/platform-profiles")
@@ -794,6 +835,19 @@ def put_member(mid: str, body: dict, user=Depends(require("head"))):
     return {"ok": True}
 
 
+@app.post("/api/members/{mid}/approve")
+def approve_member(mid: str, body: dict, user=Depends(require("head"))):
+    m = db.members.find_one({"id": mid})
+    if not m or m.get("status") != "pending":
+        err(400, "Tidak ada pendaftaran yang menunggu untuk anggota ini.")
+    if body.get("decision") == "approve":
+        db.members.update_one({"id": mid}, {"$set": {"status": "approved", "approvedBy": user["name"], "approvedAt": now_iso()}})
+    else:
+        db.members.update_one({"id": mid}, {"$set": {"status": "rejected", "active": False, "rejectedBy": user["name"],
+                                                     "rejectedAt": now_iso()}})
+    return {"ok": True}
+
+
 @app.post("/api/members/{mid}/reset-pin")
 def reset_pin(mid: str, body: dict, user=Depends(require("head"))):
     pin = str(body.get("pin") or "")
@@ -865,8 +919,8 @@ def csv_response(rows, name):
 @app.get("/api/export/{kind}.csv")
 def export(kind: str, token: str = "", authorization: Optional[str] = Header(None)):
     user = current_user(authorization or f"Bearer {token}")
-    if not (user.get("isAdmin") or user["role"] in ("head", "finance")):
-        err(403, "Export hanya untuk Admin/Finance.")
+    if not (user.get("isAdmin") or user["perm"] in ("head", "finance")):
+        err(403, "Export hanya untuk Marketing Manager, Finance, atau Revenue Growth.")
     if kind == "products":
         rows = [{"id": p["id"], "sku": p.get("sku"), "nama": p["nama"], "kategori": p.get("kategori"), "porsi": p.get("porsi"),
                  "hpp": p["hpp"], "harga_bandung": (p.get("prices") or {}).get("bandung"),
