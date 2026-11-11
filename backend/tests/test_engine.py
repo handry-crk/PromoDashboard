@@ -176,3 +176,29 @@ def test_invalid_numbers_raise_calc_error():
         run({"mechanism": "diskon_persen", "items": [{"productId": "ayam-b"}], "params": {"discountPct": "abc"}}, "offline_kios", "bandung")
     with pytest.raises(E.CalcError):
         run({"mechanism": "diskon_persen", "items": [{"productId": "ayam-b"}], "params": {"discountPct": 150}}, "offline_kios", "bandung")
+
+
+def test_event_bazaar_and_konser():
+    base = {"nama": "Paket Event", "mechanism": "bundle", "objective": "awareness", "trackingReady": True,
+            "items": [{"productId": "mozza-b"}, {"productId": "ayam-k"}]}
+    bz = PR["event_bazaar"]
+    o = E.run({**base, "params": {"packagePrice": 30000}, "fixedCosts": bz["eventFixedTemplate"]}, P, bz, "jakarta")
+    ev = o["scenarios"]["target"]["event"]
+    # 3000 × 15% × 40% = 180 trx/day × 3 days; fixed 7.05 jt
+    assert ev["trxPerDay"] == 180 and ev["totalTrx"] == 540 and o["scenarios"]["target"]["fixedCosts"] == 7050000
+    assert o["scenarios"]["target"]["contribution"] > 0 and o["health"]["label"] == "Sehat"
+    ks = PR["event_konser"]
+    o = E.run({**base, "params": {"packagePrice": 35000}, "fixedCosts": ks["eventFixedTemplate"]}, P, ks, "jakarta")
+    u = o["unit"]
+    assert u["listPrice"] == 41000  # +20% harga event, dibulatkan ke 1.000
+    assert any(f["key"] == "revshare" and f["amount"] == 7000 for f in u["feeLines"])  # 20% × 35.000
+    assert o["gate"]["status"] == "HOLD" and any(f["type"] == "event_fixed" for f in o["fixes"])
+
+
+def test_event_scorecard_gate():
+    bz = PR["event_bazaar"]
+    promo = {"mechanism": "bundle", "objective": "awareness", "trackingReady": True, "params": {"packagePrice": 30000},
+             "items": [{"productId": "mozza-b"}, {"productId": "ayam-k"}], "fixedCosts": bz["eventFixedTemplate"],
+             "event": {"score": {"audience": 2, "traffic": 2, "lokasi": 2, "exposure": 2, "ops": 2, "data": 2, "timing": 2, "ekonomi": 2}}}
+    o = E.run(promo, P, bz, "jakarta")
+    assert o["scenarios"]["meta"]["scorecard"]["decision"] == "Tolak" and o["gate"]["status"] == "HOLD"

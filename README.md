@@ -58,3 +58,9 @@ pytest -q backend/tests                    # jalankan dari folder backend
 - Email wajib `@citarasakuliner.com`. Domain bisa diganti lewat env `EMAIL_DOMAIN`.
 - Akun baru berstatus **menunggu** dan tidak bisa login sampai disetujui di **Settings → Approval anggota baru**.
 - Role lain (Promo Planner, Finance, Channel PIC, Viewer) hanya bisa diberikan Marketing Manager lewat daftar Anggota.
+
+## Event (konser, bazaar, kampus/mall/CFD, corporate)
+- Empat profil event di **Platform & Biaya**. Masing-masing berisi harga event (+% dari outlet), revenue share EO, biaya cashless/QRIS, asumsi default (hari, jam, pengunjung, capture, conversion, kapasitas booth), dan template biaya tetap (sewa booth, transport, POSM, crew, genset, konsumsi, izin).
+- Hitungan event: transaksi/hari = pengunjung × mampir × beli, dibatasi kapasitas booth. Output: break-even transaksi, event contribution, cost per transaksi, cost per CRM, stok yang dibawa (+20%), dan target per jam.
+- Event Scorecard 8 kriteria (≥ 3,8 lanjut, 3,0–3,8 negosiasi, < 3,0 tolak) masuk ke Gate. Event contribution negatif → HOLD, kecuali ada alasan strategis.
+- Database lama otomatis mendapat 4 profil event saat aplikasi start. Profil yang sudah ada tidak diubah.

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, Save, Send, Copy, ChevronDown, Wand2, Info } from "lucide-react";
-import { api, rp, rpShort, pc, num, debounce, CH_LABEL } from "../lib";
+import { api, rp, rpShort, pc, num, debounce, CH_LABEL, CH_ORDER } from "../lib";
 import { CimolBall, Badge, Waterfall, Quadrant, Loader, useToast, fireConfetti, MiniBall, CountUp } from "../ui";
 import { go } from "../App";
 
@@ -218,7 +218,7 @@ export default function Calculator({ st, reload, promoId }) {
           <div><span className="lbl">Objective</span>
             <Chips options={Object.entries(st.objectives).map(([k, l]) => [k, l])} value={promo.objective} onChange={(v) => up({ objective: v })} /></div>
           <div><span className="lbl">Platform / channel</span>
-            {["offline", "online_food", "marketplace"].map((g) => (
+            {CH_ORDER.map((g) => (
               <div key={g} className="mb-2">
                 <div className="text-[12px] text-ink/50 font-semibold mb-1">{CH_LABEL[g]}</div>
                 <Chips options={profiles.filter((p) => p.channelType === g).map((p) => [p.id, p.label.split(" – ")[0]])} value={promo.platformProfileId}
@@ -228,7 +228,13 @@ export default function Calculator({ st, reload, promoId }) {
                     const fallback = st.products.find((x) => (x.channels || []).includes(np.productChannel));
                     up({ platformProfileId: v, programsJoined: [], items: okItems.length ? okItems : [{ productId: fallback?.id, qty: 1 }],
                       mechanism: np.channelType === "offline" && ONLINE_ONLY.includes(promo.mechanism) ? "diskon_persen" : promo.mechanism,
-                      funding: np.channelType === "offline" ? { merchantPct: 100, platformPct: 0 } : promo.funding });
+                      funding: np.channelType === "offline" ? { merchantPct: 100, platformPct: 0 } : promo.funding,
+                      ...(np.channelType === "event" ? {
+                        fixedCosts: (promo.fixedCosts || []).length && promo.platformProfileId?.startsWith("event") ? promo.fixedCosts : (np.eventFixedTemplate || []).map((x) => ({ ...x })),
+                        event: { ...(promo.event || {}) },
+                        objective: ["aov", "online"].includes(promo.objective) ? "awareness" : promo.objective,
+                        scenarioInputs: { pesimis: { takeRate: 20, footfallMult: 0.7 }, target: { takeRate: 30, footfallMult: 1 }, optimis: { takeRate: 40, footfallMult: 1.3 } },
+                      } : prof?.channelType === "event" ? { fixedCosts: [], scenarioInputs: blankPromo().scenarioInputs } : {}) });
                   }} />
               </div>
             ))}
@@ -247,7 +253,7 @@ export default function Calculator({ st, reload, promoId }) {
                 <select className="field" aria-label={`Item ${i + 1}`} value={it.productId} onChange={(e) => {
                   const items = [...promo.items]; items[i] = { ...it, productId: e.target.value }; up({ items, segmentMix: undefined });
                 }}>
-                  {sellable.map((p) => <option key={p.id} value={p.id}>{p.nama} · {rp(p.prices?.[area] ?? p.prices?.bandung)}{p.hindariGratis ? " · margin tipis" : ""}</option>)}
+                  {sellable.map((p) => <option key={p.id} value={p.id}>{p.nama} · {rp(channelPrice(p, prof, area))}{p.hindariGratis ? " · margin tipis" : ""}</option>)}
                 </select>
                 <NumInput aria-label="Qty" value={it.qty || 1} onChange={(v) => { const items = [...promo.items]; items[i] = { ...it, qty: v || 1 }; up({ items }); }} />
                 <div className="flex gap-1">
@@ -275,7 +281,9 @@ export default function Calculator({ st, reload, promoId }) {
           {secondary && <p className="text-[12px] text-ink/55">Kosongkan untuk memakai angka {promo.areas[0] === "bandung" ? "Bandung Raya" : "Jabodetabek"}.</p>}
         </Section>
 
-        {ch !== "offline" && (
+        {ch === "event" && <EventSection promo={promo} up={up} prof={prof} />}
+
+        {(ch === "online_food" || ch === "marketplace") && (
           <Section title="Potongan platform" hint={prof?.label}>
             <div>
               <div className="flex justify-between text-[13px] font-semibold mb-1"><span>Diskon ditanggung kita</span><span className="num">{promo.funding?.merchantPct ?? 100}% : {100 - (promo.funding?.merchantPct ?? 100)}% platform</span></div>
@@ -299,12 +307,12 @@ export default function Calculator({ st, reload, promoId }) {
           </Section>
         )}
 
-        <Section title="Periode, outlet & kapasitas" open={false}>
+        <Section title={ch === "event" ? "Tanggal & biaya tetap event" : "Periode, outlet & kapasitas"} open={ch === "event"}>
           <div className="grid grid-cols-2 gap-3">
             {multi && <p className="col-span-2 text-[12px] text-ink/55">Biaya tetap dibagi ke tiap area sesuai jumlah outlet.</p>}
             <div><label className="lbl">Mulai</label><input type="date" className="field" value={promo.periodStart || ""} onChange={(e) => up({ periodStart: e.target.value })} /></div>
             <div><label className="lbl">Selesai</label><input type="date" className="field" value={promo.periodEnd || ""} onChange={(e) => up({ periodEnd: e.target.value })} /></div>
-            {multi ? promo.areas.map((a) => (
+            {ch === "event" ? null : multi ? promo.areas.map((a) => (
               <div key={a} className="col-span-2 grid grid-cols-2 gap-3">
                 <div><label className="lbl">Outlet {a === "bandung" ? "Bandung Raya" : "Jabodetabek"}</label>
                   <NumInput value={(promo.areaParams || {})[a]?.outlets ?? ""} placeholder="dari baseline" onChange={(v) => upArea(a, "outlets", v)} /></div>
@@ -315,16 +323,16 @@ export default function Calculator({ st, reload, promoId }) {
               <div><label className="lbl">Jumlah outlet/toko</label><NumInput value={promo.outlets} placeholder="dari baseline" onChange={(v) => up({ outlets: v })} /></div>
               <div><label className="lbl">Open rate</label><NumInput suffix="%" value={promo.openRate} placeholder="100" onChange={(v) => up({ openRate: v })} /></div>
             </>)}
-            <div><label className="lbl">Transaksi/outlet/hari</label><NumInput value={promo.trxPerOutletDay} placeholder="dari baseline" onChange={(v) => up({ trxPerOutletDay: v })} /></div>
+            {ch !== "event" && <div><label className="lbl">Transaksi/outlet/hari</label><NumInput value={promo.trxPerOutletDay} placeholder="dari baseline" onChange={(v) => up({ trxPerOutletDay: v })} /></div>}
             <div><label className="lbl">Biaya variabel/unit</label><NumInput prefix="Rp" value={promo.variableCostPerUnit} onChange={(v) => up({ variableCostPerUnit: v })} /></div>
-            <div><label className="lbl">Kuota/outlet/hari</label><NumInput value={promo.quotaPerOutletDay} onChange={(v) => up({ quotaPerOutletDay: v })} /></div>
-            <div><label className="lbl">Kapasitas/outlet/hari</label><NumInput value={promo.capacityPerOutletDay} onChange={(v) => up({ capacityPerOutletDay: v })} /></div>
+            {ch !== "event" && <div><label className="lbl">Kuota/outlet/hari</label><NumInput value={promo.quotaPerOutletDay} onChange={(v) => up({ quotaPerOutletDay: v })} /></div>}
+            {ch !== "event" && <div><label className="lbl">Kapasitas/outlet/hari</label><NumInput value={promo.capacityPerOutletDay} onChange={(v) => up({ capacityPerOutletDay: v })} /></div>}
           </div>
           <label className="flex items-center gap-2 text-[14px] font-semibold min-h-[44px]">
             <input type="checkbox" className="w-5 h-5 accent-bata" checked={!!promo.trackingReady} onChange={(e) => up({ trackingReady: e.target.checked })} />SKU / kode voucher sudah siap di POS
           </label>
           <div>
-            <span className="lbl">Biaya tetap (POSM, ads, KOL)</span>
+            <span className="lbl">{ch === "event" ? "Biaya tetap event (sewa booth, transport, POSM, crew, genset, izin)" : "Biaya tetap (POSM, ads, KOL)"}</span>
             {(promo.fixedCosts || []).map((f, i) => (
               <div key={i} className="grid grid-cols-[1fr_130px_auto] gap-2 mb-2">
                 <input className="field" value={f.label} placeholder="Keterangan" onChange={(e) => { const x = [...promo.fixedCosts]; x[i] = { ...f, label: e.target.value }; up({ fixedCosts: x }); }} />
@@ -336,19 +344,21 @@ export default function Calculator({ st, reload, promoId }) {
           </div>
         </Section>
 
-        <Section title="Asumsi skenario" open={false}>
+        <Section title="Asumsi skenario" open={false} hint={ch === "event" ? "take rate = porsi pembeli yang ambil promo" : null}>
           <div className="grid grid-cols-3 gap-2 text-[13px]">
             {["pesimis", "target", "optimis"].map((k) => (
               <div key={k} className="space-y-2">
                 <div className="font-extrabold capitalize">{k}</div>
                 <div><label className="lbl">Take rate</label><NumInput suffix="%" value={promo.scenarioInputs?.[k]?.takeRate} onChange={(v) => up({ scenarioInputs: { ...promo.scenarioInputs, [k]: { ...promo.scenarioInputs[k], takeRate: v } } })} /></div>
-                <div><label className="lbl">Traffic uplift</label><NumInput suffix="%" value={promo.scenarioInputs?.[k]?.trafficUplift} onChange={(v) => up({ scenarioInputs: { ...promo.scenarioInputs, [k]: { ...promo.scenarioInputs[k], trafficUplift: v } } })} /></div>
+                {ch === "event"
+                  ? <div><label className="lbl">Pengunjung ×</label><NumInput value={promo.scenarioInputs?.[k]?.footfallMult} onChange={(v) => up({ scenarioInputs: { ...promo.scenarioInputs, [k]: { ...promo.scenarioInputs[k], footfallMult: v } } })} /></div>
+                  : <div><label className="lbl">Traffic uplift</label><NumInput suffix="%" value={promo.scenarioInputs?.[k]?.trafficUplift} onChange={(v) => up({ scenarioInputs: { ...promo.scenarioInputs, [k]: { ...promo.scenarioInputs[k], trafficUplift: v } } })} /></div>}
               </div>
             ))}
           </div>
         </Section>
 
-        {PACKAGE.includes(promo.mechanism) && o?.incremental && (
+        {PACKAGE.includes(promo.mechanism) && o?.incremental && ch !== "event" && (
           <Section title="Siapa yang beli paket ini?" open={false} hint="segment mix">
             <p className="text-[13px] text-ink/60">Kalau tidak ada promo, pembeli paket ini sebenarnya akan beli apa? Ini menentukan tambahan revenue dan CM yang benar-benar baru.</p>
             {(promo.segmentMix || o.incremental.segments.map((s, i) => ({ label: s.label, share: s.share, counterfactual: s.counterfactual }))).map((sg, i, arr) => (
@@ -415,8 +425,10 @@ export default function Calculator({ st, reload, promoId }) {
               <KeyNum label="CM per unit" v={o.unit.cm} sub={pc(o.unit.cmPct)} tone={o.unit.cm > 0 ? "#2F6B4A" : "#B42F27"} />
               <KeyNum label={ch === "offline" ? "Harga min. sehat" : "Potongan platform"} v={ch === "offline" ? o.minHealthyPrice?.rounded : null}
                 text={ch === "offline" ? null : pc(o.unit.effectiveTakeRate)} sub={ch === "offline" ? (o.minHealthyPrice ? `tepat ${rp(o.minHealthyPrice.exact)}` : "–") : rp(o.unit.platformFees + o.unit.adsCost)} />
-              <KeyNum label="Contribution Target" v={o.scenarios.target.contribution} sub={`ROI ${o.scenarios.target.roi == null ? "–" : pc(o.scenarios.target.roi, 0)}`} tone={o.scenarios.target.contribution > 0 ? "#2F6B4A" : "#B42F27"} />
+              <KeyNum label={ch === "event" ? "Event contribution" : "Contribution Target"} v={o.scenarios.target.contribution} sub={`ROI ${o.scenarios.target.roi == null ? "–" : pc(o.scenarios.target.roi, 0)}`} tone={o.scenarios.target.contribution > 0 ? "#2F6B4A" : "#B42F27"} />
             </div>
+
+            {o.scenarios.target.event && <EventPanel o={o} />}
 
             {!!o.fixes?.length && (
               <section className="card p-4">
@@ -469,6 +481,16 @@ function clean(p) {
   return out;
 }
 
+function channelPrice(p, prof, area) {
+  const over = p.platformPrices?.[prof?.id]?.[area];
+  if (over) return over;
+  const base = p.prices?.[area] ?? p.prices?.bandung;
+  const mk = Number(prof?.pricing?.markupPct || 0);
+  if (!mk || base == null) return base;
+  const step = Number(prof?.pricing?.roundingStep || 500);
+  return Math.ceil((base * (1 + mk / 100)) / step - 1e-9) * step;
+}
+
 function KeyNum({ label, v, sub, tone, text }) {
   return (
     <div className="card p-3">
@@ -506,7 +528,19 @@ const Row = ({ k, v }) => (<><div className="text-ink/65">{k}</div><div classNam
 
 function ScenarioTab({ o }) {
   const s = o.scenarios;
-  const rows = [
+  const rows = s.target.event ? [
+    ["Pengunjung × / take rate", (x) => `${String(x.footfallMult).replace(".", ",")}× / ${x.takeRate}%`],
+    ["Transaksi/hari", (x) => x.event.trxPerDay.toLocaleString("id-ID")],
+    ["Total transaksi", (x) => num(x.event.totalTrx)],
+    ["Break-even transaksi", (x) => num(x.event.breakevenTrx)],
+    ["Paket promo terjual", (x) => num(x.totalUnits)],
+    ["Revenue event", (x) => rp(x.incRevenue)],
+    ["CM event", (x) => rp(x.incCM)],
+    ["Biaya tetap", (x) => rp(x.fixedCosts)],
+    ["Event contribution", (x) => rp(x.contribution)],
+    ["Cost per CRM", (x) => rp(x.event.costPerCRM)],
+    ["Stok dibawa (porsi)", (x) => num(x.event.stockPortions)],
+  ] : [
     ["Take rate / traffic", (x) => `${x.takeRate}% / +${x.trafficUplift}%`],
     ["Unit/outlet/hari", (x) => x.unitsPerOutletDay.toLocaleString("id-ID")],
     ["Total unit", (x) => num(x.totalUnits)],
@@ -535,7 +569,7 @@ function ScenarioTab({ o }) {
       </div>
       <div className="scroll-x -mx-1">
         <table className="w-full min-w-[420px] text-[13px]">
-          <thead><tr><th className="th rounded-tl-xl">{num(s.meta.outletDays)} outlet-hari</th><th className="th">Pesimis</th><th className="th">Target</th><th className="th rounded-tr-xl">Optimis</th></tr></thead>
+          <thead><tr><th className="th rounded-tl-xl">{s.target.event ? `${s.meta.days} hari event` : `${num(s.meta.outletDays)} outlet-hari`}</th><th className="th">Pesimis</th><th className="th">Target</th><th className="th rounded-tr-xl">Optimis</th></tr></thead>
           <tbody>{rows.map(([l, f]) => (
             <tr key={l}><td className="td text-ink/70">{l}</td>{["pesimis", "target", "optimis"].map((k) => <td key={k} className={`td num text-right ${k === "target" ? "font-bold" : ""}`}>{f(s[k])}</td>)}</tr>
           ))}</tbody>
@@ -595,6 +629,105 @@ function PlatformTab({ cmp }) {
         </motion.div>
       ))}
     </div>
+  );
+}
+
+const SCORE_ROWS = [
+  ["audience", "Audience fit", "Pengunjung cocok dengan target CBAA (usia, daya beli, suka jajan)"],
+  ["traffic", "Traffic per tenant", "Pengunjung dibagi jumlah tenant F&B sejenis"],
+  ["ekonomi", "Ekonomi", "Kosongkan untuk dinilai otomatis dari break-even"],
+  ["lokasi", "Lokasi strategis", "Dekat outlet atau area ekspansi"],
+  ["exposure", "Exposure & konten", "Media, KOL, potensi UGC"],
+  ["ops", "Ops feasibility", "Listrik, air, loading, jarak dapur, cuaca"],
+  ["data", "Data capture", "Bisa kumpulkan nomor WA / follow IG"],
+  ["timing", "Timing", "Tidak bentrok activity lain, stok & crew siap"],
+];
+
+function EventSection({ promo, up, prof }) {
+  const ev = promo.event || {};
+  const d = prof?.eventDefaults || {};
+  const set = (k, v) => up({ event: { ...ev, [k]: v } });
+  const sc = ev.score || {};
+  const setScore = (k, v) => up({ event: { ...ev, score: { ...sc, [k]: v } } });
+  const f = (k, label, props = {}) => (
+    <div key={k}><label className="lbl">{label}</label><NumInput value={ev[k] ?? ""} placeholder={d[k] != null ? Number(d[k]).toLocaleString("id-ID") : ""} onChange={(v) => set(k, v)} {...props} /></div>
+  );
+  const fees = (prof?.feeComponents || []).filter((c) => c.active !== false && (c.rate || c.amount));
+  return (
+    <>
+      <Section title="Event & booth" hint={prof?.label}>
+        <div className="rounded-2xl bg-blush px-3 py-2 text-[13px]">
+          Harga event {prof?.pricing?.markupPct ? `+${prof.pricing.markupPct}% dari outlet` : "sama dengan outlet"}
+          {fees.map((c) => ` · ${c.label} ${c.type?.startsWith("percent") ? `${c.rate}%` : rp(c.amount)}`).join("")}
+          {prof?.costs?.paymentFeePct ? ` · Biaya cashless/QRIS ${String(prof.costs.paymentFeePct).replace(".", ",")}%` : ""}.{" "}
+          <a href="#/platform" className="underline text-bata">Ubah</a>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {f("days", "Durasi event", { suffix: "hari" })}
+          {f("hoursPerDay", "Jam buka/hari", { suffix: "jam" })}
+          {f("footfallPerDay", "Pengunjung/hari")}
+          {f("fnbTenants", "Tenant F&B sejenis")}
+          {f("capturePct", "Mampir ke booth", { suffix: "%" })}
+          {f("conversionPct", "Yang beli", { suffix: "%" })}
+          {f("booths", "Jumlah booth")}
+          {f("boothCapacityPerHour", "Kapasitas porsi/jam", {})}
+          {f("aovEvent", "AOV non-promo", { prefix: "Rp" })}
+          {f("unitsPerTrx", "Porsi per transaksi")}
+          {f("crmCapturePct", "Data CRM terkumpul", { suffix: "%" })}
+        </div>
+        <p className="text-[12px] text-ink/55">Transaksi/hari = pengunjung × mampir × beli, dibatasi kapasitas booth. Semua penjualan event dihitung tambahan (bukan kanibalisasi outlet).</p>
+      </Section>
+      <Section title="Event Scorecard" hint="skor 1–5" open={false}>
+        {SCORE_ROWS.map(([k, label, hint]) => (
+          <div key={k}>
+            <div className="flex justify-between text-[14px] font-semibold"><span>{label}</span><span className="num text-bata">{sc[k] || (k === "ekonomi" ? "auto" : "–")}</span></div>
+            <div className="text-[12px] text-ink/55 mb-1">{hint}</div>
+            <div className="grid grid-cols-5 gap-1.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} type="button" onClick={() => setScore(k, sc[k] === n ? "" : n)} aria-label={`${label} ${n}`}
+                  className={`h-10 rounded-xl font-bold border ${sc[k] >= n ? "bg-bata text-cream border-bata" : "border-line bg-white/60"}`}>{n}</button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </Section>
+    </>
+  );
+}
+
+function EventPanel({ o }) {
+  const t = o.scenarios.target;
+  const e = t.event;
+  const sc = o.scenarios.meta.scorecard;
+  const cover = e.breakevenTrx ? Math.min(e.totalTrx / e.breakevenTrx, 2) : 0;
+  return (
+    <section className="card p-4">
+      <div className="font-extrabold mb-2">Hitungan event (skenario Target)</div>
+      <div className="text-[13px] font-semibold flex justify-between"><span>Transaksi vs break-even</span><span className="num">{num(e.totalTrx)} / {num(e.breakevenTrx)}</span></div>
+      <div className="relative h-4 rounded-full bg-cream mt-1 overflow-hidden">
+        <motion.div className="absolute inset-y-0 left-0 rounded-full" style={{ background: cover >= 1.3 ? "#2F6B4A" : cover >= 1 ? "#B8741A" : "#B42F27" }}
+          initial={{ width: 0 }} animate={{ width: `${(cover / 2) * 100}%` }} transition={{ type: "spring", stiffness: 70, damping: 15 }} />
+        <div className="absolute inset-y-0 left-1/2 w-0.5 bg-ink" title="Break-even" />
+      </div>
+      <div className="text-[11px] text-ink/55 mt-0.5">Garis tengah = break-even</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3 text-[13px]">
+        {[["Transaksi/hari", e.trxPerDay.toLocaleString("id-ID")], ["Kapasitas/hari", `${e.capacityTrxPerDay.toLocaleString("id-ID")}${e.trxDemandPerDay > e.capacityTrxPerDay ? " (penuh)" : ""}`],
+          ["Target per jam", `${e.targetPerHour.toLocaleString("id-ID")} trx`], ["Revenue event", rp(t.incRevenue)],
+          ["Cost per transaksi", rp(e.costPerTrx)], ["Cost per CRM", e.costPerCRM ? rp(e.costPerCRM) : "–"],
+          ["Data CRM", num(e.crmAcquired)], ["Stok dibawa", `${num(e.stockPortions)} porsi`], ["CM per transaksi", rp(e.blendedCmPerTrx)]].map(([k, v]) => (
+          <div key={k} className="rounded-xl bg-cream/70 px-2.5 py-1.5"><div className="text-[11px] text-ink/55 font-semibold">{k}</div><div className="font-bold num">{v}</div></div>
+        ))}
+      </div>
+      {sc && (
+        <div className="mt-3 rounded-2xl bg-blush px-3 py-2 flex items-center justify-between gap-2">
+          <div><div className="text-[12px] font-semibold text-ink/60">Event Scorecard</div>
+            {sc.complete
+              ? <div className="font-extrabold text-[18px] num">{String(sc.score.toFixed(2)).replace(".", ",")} <span className="text-[13px] font-semibold text-ink/60">/ 5</span></div>
+              : <div className="font-bold text-[14px]">{sc.rows.length} dari 8 kriteria terisi</div>}</div>
+          <span className="pill">{sc.decision}</span>
+        </div>
+      )}
+    </section>
   );
 }
 

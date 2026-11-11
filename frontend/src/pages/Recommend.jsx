@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, ArrowUpRight, Save } from "lucide-react";
-import { api, rp, pc, CH_LABEL } from "../lib";
+import { api, rp, pc, CH_LABEL, CH_ORDER } from "../lib";
 import { Title, MiniBall, Badge, Loader, useToast, fireConfetti, CountUp } from "../ui";
 import { NumInput } from "./Calculator";
 import { go } from "../App";
@@ -43,7 +43,7 @@ export default function Recommend({ st, reload }) {
         <Title a="Cari" b="rekomendasi" sub="Mesin mencoba semua kombinasi lalu memilih yang terbaik" />
         <div><span className="lbl">Platform / channel</span>
           <select className="field" value={f.platformProfileId} onChange={(e) => set({ platformProfileId: e.target.value, programsAllowed: [] })}>
-            {["offline", "online_food", "marketplace"].map((g) => (
+            {CH_ORDER.map((g) => (
               <optgroup key={g} label={CH_LABEL[g]}>{st.profiles.filter((p) => p.channelType === g).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</optgroup>
             ))}
           </select></div>
@@ -85,7 +85,9 @@ export default function Recommend({ st, reload }) {
             Pilih platform dan objective, lalu tekan <b>Cari rekomendasi</b>. Mesin hanya menampilkan promo yang tetap untung setelah HPP dan semua potongan platform, dan tidak mendiskon item bermargin tipis (minuman, saus Misdasem/Kacang).
           </div>
         )}
-        {res && !res.length && <div className="card p-6">Tidak ada kombinasi yang lolos. Naikkan diskon maksimal atau budget, atau izinkan co-funding.</div>}
+        {res && !res.length && <div className="card p-6">{prof?.channelType === "event"
+          ? "Tidak ada promo yang membuat event ini balik modal dengan asumsi default. Negosiasi sewa booth atau revenue share, tambah hari event, atau ubah asumsi pengunjung di Platform & Biaya."
+          : "Tidak ada kombinasi yang lolos. Naikkan diskon maksimal atau budget, atau izinkan co-funding."}</div>}
         <AnimatePresence>
           {res?.map((x, i) => (
             <motion.article key={x.promo.nama + i} initial={{ opacity: 0, y: 24, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}

@@ -72,6 +72,18 @@ def _offline(pid, label, ch):
             "ads": {"model": "none"}, "version": 1}
 
 
+EVENT_NOTE = "Template — isi sesuai kontrak EO / proposal event"
+
+
+def _event(pid, label, markup, comps, defaults, fixed, cashless=0.0):
+    return {"id": pid, "platform": pid, "channelType": "event", "productChannel": "event", "label": label,
+            "verified": False, "sourceNote": EVENT_NOTE, "effectiveDate": "2026-11-12",
+            "pricing": {"markupPct": markup, "roundingStep": 1000, "packagingFeeToCustomer": 0}, "avgUnitsPerOrder": 1,
+            "feeComponents": comps, "ppnPct": 0, "adminFeeDiscountPct": 0, "programs": [],
+            "costs": {"extraPackagingPerOrder": 0, "returnAllowancePct": 0, "paymentFeePct": cashless, "otherFixedPerOrder": 0},
+            "ads": {"model": "none"}, "eventDefaults": defaults, "eventFixedTemplate": fixed, "version": 1}
+
+
 def _food(pid, label, comps, prog_key, prog_label):
     return {"id": pid, "platform": pid, "channelType": "online_food", "productChannel": "online_food", "label": label,
             "verified": False, "sourceNote": NOTE, "effectiveDate": "2026-11-11",
@@ -93,7 +105,6 @@ def _comp(key, label, typ="percent", rate=0, amount=0, base="net_after_merchant_
 PROFILES = [
     _offline("offline_kios", "Offline Kios", "kios"),
     _offline("offline_gerobak", "Offline Gerobak", "gerobak"),
-    _offline("event", "Event / Booth", "event"),
     _food("gofood", "GoFood – Reguler", [
         _comp("komisi", "Komisi GoFood", rate=20, taxable=True),
         _comp("biaya_order", "Biaya per order", "fixed_per_order", amount=1000, taxable=True)],
@@ -102,6 +113,34 @@ PROFILES = [
           "grabfood_cofund", "GrabFood Diskon Bersama"),
     _food("shopeefood", "ShopeeFood – Reguler", [_comp("komisi", "Komisi ShopeeFood", rate=20, taxable=True)],
           "shopeefood_cofund", "ShopeeFood Promo Spesial"),
+    _event("event_bazaar", "Bazaar / Food Festival", 0,
+           [_comp("revshare", "Revenue share EO", rate=0, base="net_after_all_discount")],
+           {"days": 3, "hoursPerDay": 10, "footfallPerDay": 3000, "fnbTenants": 40, "capturePct": 15, "conversionPct": 40,
+            "booths": 1, "boothCapacityPerHour": 60, "aovEvent": 25000, "crmCapturePct": 20, "unitsPerTrx": 1.3},
+           [{"label": "Sewa booth", "amount": 3000000}, {"label": "Transport & loading", "amount": 750000},
+            {"label": "POSM & dekorasi", "amount": 1000000}, {"label": "Fee crew (3 × 3 hari)", "amount": 1350000},
+            {"label": "Listrik / genset", "amount": 500000}, {"label": "Konsumsi crew", "amount": 450000}], cashless=0.3),
+    _event("event_konser", "Konser Musik", 20,
+           [_comp("revshare", "Revenue share EO", rate=20, base="net_after_all_discount")],
+           {"days": 1, "hoursPerDay": 10, "footfallPerDay": 15000, "fnbTenants": 60, "capturePct": 10, "conversionPct": 35,
+            "booths": 1, "boothCapacityPerHour": 80, "aovEvent": 35000, "crmCapturePct": 10, "unitsPerTrx": 1.3},
+           [{"label": "Sewa booth", "amount": 7500000}, {"label": "Transport & loading", "amount": 1500000},
+            {"label": "POSM & dekorasi", "amount": 1500000}, {"label": "Fee crew (5 × 1 hari)", "amount": 1000000},
+            {"label": "Genset", "amount": 1000000}, {"label": "Konsumsi crew", "amount": 250000},
+            {"label": "ID card / akses crew", "amount": 500000}], cashless=2.0),
+    _event("event_kampus", "Event Kampus / Mall / CFD", 0,
+           [_comp("revshare", "Revenue share EO", rate=0, base="net_after_all_discount")],
+           {"days": 2, "hoursPerDay": 8, "footfallPerDay": 2000, "fnbTenants": 20, "capturePct": 15, "conversionPct": 40,
+            "booths": 1, "boothCapacityPerHour": 50, "aovEvent": 20000, "crmCapturePct": 25, "unitsPerTrx": 1.3},
+           [{"label": "Sewa booth", "amount": 1500000}, {"label": "Transport & loading", "amount": 500000},
+            {"label": "POSM & dekorasi", "amount": 750000}, {"label": "Fee crew (3 × 2 hari)", "amount": 900000},
+            {"label": "Konsumsi crew", "amount": 300000}], cashless=0.3),
+    _event("event_corporate", "Corporate / B2B (catering)", 0,
+           [_comp("revshare", "Fee perantara / vendor", rate=0, base="net_after_all_discount")],
+           {"days": 1, "hoursPerDay": 4, "footfallPerDay": 300, "fnbTenants": 1, "capturePct": 100, "conversionPct": 100,
+            "booths": 1, "boothCapacityPerHour": 150, "aovEvent": 25000, "crmCapturePct": 0, "unitsPerTrx": 1},
+           [{"label": "Pengiriman", "amount": 300000}, {"label": "Packaging premium / box", "amount": 600000},
+            {"label": "Fee crew", "amount": 300000}]),
     {"id": "shopee", "platform": "shopee", "channelType": "marketplace", "productChannel": "marketplace",
      "label": "Shopee – Star", "verified": False, "sourceNote": NOTE, "effectiveDate": "2026-11-11",
      "pricing": {"markupPct": 0, "roundingStep": 1000, "packagingFeeToCustomer": 0}, "avgUnitsPerOrder": 2,

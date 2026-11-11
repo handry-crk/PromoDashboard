@@ -37,7 +37,7 @@ export default function Platforms({ st, reload }) {
   return (
     <div>
       <Title a="Platform" b="& biaya" sub="Komisi, biaya per order, program, packaging, ads — semua bisa diubah di sini" />
-      {["online_food", "marketplace", "offline"].map((g) => (
+      {["online_food", "marketplace", "event", "offline"].map((g) => (
         <section key={g} className="mb-6">
           <h3 className="font-extrabold text-[17px] mb-2">{CH_LABEL[g]}</h3>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -65,10 +65,13 @@ export default function Platforms({ st, reload }) {
                     {!!p.ppnPct && <li className="flex justify-between"><span className="text-ink/75">PPN atas biaya</span><b>{p.ppnPct}%</b></li>}
                     {!!p.costs?.extraPackagingPerOrder && <li className="flex justify-between"><span className="text-ink/75">Packaging/order</span><b className="num">{rp(p.costs.extraPackagingPerOrder)}</b></li>}
                     {p.ads?.model === "roas" && <li className="flex justify-between"><span className="text-ink/75">Ads ROAS target</span><b>{p.ads.roas}</b></li>}
-                    {!!p.pricing?.markupPct && <li className="flex justify-between"><span className="text-ink/75">Markup harga app</span><b>{p.pricing.markupPct}%</b></li>}
+                    {!!p.pricing?.markupPct && <li className="flex justify-between"><span className="text-ink/75">{g === "event" ? "Harga event" : "Markup harga app"}</span><b>+{p.pricing.markupPct}%</b></li>}
+                    {!!p.costs?.paymentFeePct && <li className="flex justify-between"><span className="text-ink/75">Biaya pembayaran / cashless</span><b>{String(p.costs.paymentFeePct).replace(".", ",")}%</b></li>}
+                    {g === "event" && <li className="flex justify-between"><span className="text-ink/75">Template biaya tetap</span><b className="num">{rp((p.eventFixedTemplate || []).reduce((a, x) => a + (x.amount || 0), 0))}</b></li>}
+                    {g === "event" && p.eventDefaults && <li className="text-ink/55 text-[12px]">{p.eventDefaults.days} hari · {Number(p.eventDefaults.footfallPerDay).toLocaleString("id-ID")} pengunjung/hari · capture {p.eventDefaults.capturePct}% · beli {p.eventDefaults.conversionPct}%</li>}
                   </ul>
                   <div className="flex flex-wrap gap-2 mt-3">
-                    {g !== "offline" && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => setSim({ profileId: p.id, items: [{ productId: st.products.find((x) => (x.channels || []).includes(p.productChannel))?.id, qty: 1 }], discountPct: 0, merchantPct: 100, area: "jakarta", res: null })}><Calculator size={15} />Simulasi 1 order</button>}
+                    {(g === "online_food" || g === "marketplace") && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => setSim({ profileId: p.id, items: [{ productId: st.products.find((x) => (x.channels || []).includes(p.productChannel))?.id, qty: 1 }], discountPct: 0, merchantPct: 100, area: "jakarta", res: null })}><Calculator size={15} />Simulasi 1 order</button>}
                     {canEdit(p) && !p.verified && <button className="btn-ghost !min-h-[38px] !text-[13px]" onClick={() => verify(p)}><ShieldCheck size={15} />Tandai divalidasi</button>}
                     {(u.isAdmin || ["finance", "head"].includes(u.perm)) && <button className="btn-soft !min-h-[38px] !text-[13px]" onClick={() => dup(p)}><Dup size={15} />Duplikat</button>}
                   </div>
@@ -126,12 +129,12 @@ function ProfileForm({ p, set, onSave }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div><label className="lbl">PPN atas biaya</label><NumInput suffix="%" value={p.ppnPct} onChange={(v) => set({ ...p, ppnPct: v || 0 })} /></div>
         <div><label className="lbl">Diskon biaya admin</label><NumInput suffix="%" value={p.adminFeeDiscountPct} onChange={(v) => set({ ...p, adminFeeDiscountPct: v || 0 })} /></div>
-        <div><label className="lbl">Markup harga app</label><NumInput suffix="%" value={p.pricing?.markupPct} onChange={(v) => set({ ...p, pricing: { ...p.pricing, markupPct: v || 0 } })} /></div>
+        <div><label className="lbl">{p.channelType === "event" ? "Harga event (+%)" : "Markup harga app"}</label><NumInput suffix="%" value={p.pricing?.markupPct} onChange={(v) => set({ ...p, pricing: { ...p.pricing, markupPct: v || 0 } })} /></div>
         <div><label className="lbl">Biaya kemasan ke customer</label><NumInput prefix="Rp" value={p.pricing?.packagingFeeToCustomer} onChange={(v) => set({ ...p, pricing: { ...p.pricing, packagingFeeToCustomer: v || 0 } })} /></div>
         <div><label className="lbl">Porsi per order</label><NumInput value={p.avgUnitsPerOrder} onChange={(v) => set({ ...p, avgUnitsPerOrder: v || 1 })} /></div>
         <div><label className="lbl">Packaging per order</label><NumInput prefix="Rp" value={p.costs?.extraPackagingPerOrder} onChange={(v) => set({ ...p, costs: { ...p.costs, extraPackagingPerOrder: v || 0 } })} /></div>
         <div><label className="lbl">Cadangan retur</label><NumInput suffix="%" value={p.costs?.returnAllowancePct} onChange={(v) => set({ ...p, costs: { ...p.costs, returnAllowancePct: v || 0 } })} /></div>
-        <div><label className="lbl">Biaya pembayaran</label><NumInput suffix="%" value={p.costs?.paymentFeePct} onChange={(v) => set({ ...p, costs: { ...p.costs, paymentFeePct: v || 0 } })} /></div>
+        <div><label className="lbl">{p.channelType === "event" ? "Biaya cashless/QRIS" : "Biaya pembayaran"}</label><NumInput suffix="%" value={p.costs?.paymentFeePct} onChange={(v) => set({ ...p, costs: { ...p.costs, paymentFeePct: v || 0 } })} /></div>
         <div><label className="lbl">Model ads</label><select className="field" value={p.ads?.model || "none"} onChange={(e) => set({ ...p, ads: { ...p.ads, model: e.target.value } })}>
           <option value="none">Tanpa ads</option><option value="pct_of_sales">% dari penjualan</option><option value="roas">Target ROAS</option><option value="cpc">Biaya per klik</option></select></div>
         {p.ads?.model === "pct_of_sales" && <div><label className="lbl">Ads % penjualan</label><NumInput suffix="%" value={p.ads.pct} onChange={(v) => set({ ...p, ads: { ...p.ads, pct: v || 0 } })} /></div>}
@@ -139,6 +142,27 @@ function ProfileForm({ p, set, onSave }) {
         {p.ads?.model === "cpc" && <><div><label className="lbl">CPC</label><NumInput prefix="Rp" value={p.ads.cpc} onChange={(v) => set({ ...p, ads: { ...p.ads, cpc: v || 0 } })} /></div>
           <div><label className="lbl">Konversi</label><NumInput suffix="%" value={p.ads.cvrPct} onChange={(v) => set({ ...p, ads: { ...p.ads, cvrPct: v || 0 } })} /></div></>}
       </div>
+      {p.channelType === "event" && (
+        <div>
+          <div className="font-extrabold mb-2">Asumsi default event</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[["days", "Durasi (hari)"], ["hoursPerDay", "Jam/hari"], ["footfallPerDay", "Pengunjung/hari"], ["fnbTenants", "Tenant F&B"],
+              ["capturePct", "Mampir %"], ["conversionPct", "Beli %"], ["boothCapacityPerHour", "Kapasitas porsi/jam"], ["aovEvent", "AOV non-promo"],
+              ["unitsPerTrx", "Porsi/transaksi"], ["crmCapturePct", "Data CRM %"]].map(([k, l]) => (
+              <div key={k}><label className="lbl">{l}</label><NumInput value={p.eventDefaults?.[k] ?? ""} onChange={(v) => set({ ...p, eventDefaults: { ...p.eventDefaults, [k]: v } })} /></div>
+            ))}
+          </div>
+          <div className="font-extrabold mt-4 mb-2">Template biaya tetap</div>
+          {(p.eventFixedTemplate || []).map((x, i) => (
+            <div key={i} className="grid grid-cols-[1fr_150px_auto] gap-2 mb-2">
+              <input className="field" value={x.label} onChange={(e) => { const t = [...p.eventFixedTemplate]; t[i] = { ...x, label: e.target.value }; set({ ...p, eventFixedTemplate: t }); }} />
+              <NumInput prefix="Rp" value={x.amount} onChange={(v) => { const t = [...p.eventFixedTemplate]; t[i] = { ...x, amount: v || 0 }; set({ ...p, eventFixedTemplate: t }); }} />
+              <button type="button" aria-label="Hapus biaya" className="h-11 w-11 rounded-xl border border-line flex items-center justify-center" onClick={() => set({ ...p, eventFixedTemplate: p.eventFixedTemplate.filter((_, j) => j !== i) })}><Trash2 size={16} /></button>
+            </div>
+          ))}
+          <button className="btn-soft" onClick={() => set({ ...p, eventFixedTemplate: [...(p.eventFixedTemplate || []), { label: "", amount: 0 }] })}><Plus size={16} />Biaya</button>
+        </div>
+      )}
       {!!p.programs?.length && <div>
         <div className="font-extrabold mb-2">Program platform</div>
         {p.programs.map((g, i) => (

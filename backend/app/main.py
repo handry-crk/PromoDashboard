@@ -328,6 +328,24 @@ def enrich_product(p, s):
     return {**p, **E.product_flags(p, s)}
 
 
+def migrate_event_profiles():
+    """Add event templates to databases seeded before they existed. Never touches existing profiles."""
+    try:
+        if db.products.count_documents({}) == 0:
+            return
+        for prof in S.PROFILES:
+            if prof["channelType"] == "event" and not db.profiles.find_one({"id": prof["id"]}):
+                db.profiles.insert_one(copy.deepcopy(prof))
+                log.info("Profil event ditambahkan: %s", prof["label"])
+        db.profiles.update_one({"id": "event", "channelType": "offline"}, {"$set": {"label": "Event / Booth (lama)", "channelType": "event",
+                               "eventDefaults": next(p for p in S.PROFILES if p["id"] == "event_bazaar")["eventDefaults"], "eventFixedTemplate": [], "verified": False}})
+    except Exception as e:  # pragma: no cover
+        log.warning("Migrasi profil event gagal: %s", e)
+
+
+migrate_event_profiles()
+
+
 # ---------------------------------------------------------------------------
 # routes: health & auth
 # ---------------------------------------------------------------------------
@@ -537,6 +555,9 @@ def api_recommend(body: dict, user=Depends(current_user)):
     if not prof:
         err(400, "Pilih platform/channel.")
     area = body.get("area", "bandung")
+    if prof.get("channelType") == "event":
+        body = {**body, "fixedCosts": body.get("fixedCosts") or copy.deepcopy(prof.get("eventFixedTemplate") or []),
+                "trackingReady": True}
     res = E.recommend(body, products_map(), prof, s, baseline_for(s, prof["id"], area), history_list())
     for x in res:
         x["promo"]["platformProfileId"] = prof["id"]

@@ -396,7 +396,7 @@ def calc(promo: dict, products: dict, profile: dict, area: str, settings: dict |
     gross_profit = s["merchantGross"] - u["hpp"]
     normal = normal_cm_for_items(profile, u["rows"], promo)
     promo_cost = s["merchantDiscount"] + u["extraCost"]
-    is_online = profile.get("channelType") in ("online_food", "marketplace")
+    is_online = profile.get("channelType") in ("online_food", "marketplace", "event")
     eff_take = pct(s["platformFees"] + s["adsCost"], s["merchantGross"]) if is_online else None
     base_gp = baseline.get("gpPerTrx")
     cm_vs_base = pct(cm, base_gp) if (base_gp and mech in PACKAGE_MECHS) else None
@@ -428,7 +428,7 @@ def calc(promo: dict, products: dict, profile: dict, area: str, settings: dict |
 
     # incremental model
     inc = None
-    if mech in PACKAGE_MECHS and len(u["rows"]) >= 1:
+    if mech in PACKAGE_MECHS and len(u["rows"]) >= 1 and profile.get("channelType") != "event":
         segs = promo.get("segmentMix") or default_segments(u["rows"])
         tot_share = sum(float(sg.get("share") or 0) for sg in segs) or 100
         inc_rev = 0.0
@@ -457,7 +457,10 @@ def calc(promo: dict, products: dict, profile: dict, area: str, settings: dict |
         min_price = min_healthy_price(profile, u, promo, settings, base_gp if mech in PACKAGE_MECHS else None,
                                       merchant_pct, programs, upo, overrides, var_cost)
 
-    scen = scenarios(promo, unit, inc, baseline, profile)
+    if profile.get("channelType") == "event":
+        scen = event_scenarios(promo, unit, u, profile)
+    else:
+        scen = scenarios(promo, unit, inc, baseline, profile)
 
     health = health_score(promo, unit, scen, settings, profile, mech)
     margin = margin_score(unit)
@@ -524,6 +527,111 @@ def min_healthy_price(profile, u, promo, settings, base_gp, merchant_pct, progra
             lo = mid + 1
     return {"exact": lo, "rounded": ceil_step(lo, step), "target": "baseline" if base_gp else "floor",
             "aboveList": lo > u["list"]}
+
+
+EVENT_SCORECARD = [
+    ("audience", "Audience fit", 0.20), ("traffic", "Traffic per tenant", 0.20), ("ekonomi", "Ekonomi (break-even)", 0.20),
+    ("lokasi", "Lokasi strategis", 0.10), ("exposure", "Exposure & konten", 0.10), ("ops", "Ops feasibility", 0.10),
+    ("data", "Data capture", 0.05), ("timing", "Timing", 0.05),
+]
+EVENT_DEFAULTS = {"days": 1, "hoursPerDay": 10, "footfallPerDay": 3000, "fnbTenants": 40, "capturePct": 15, "conversionPct": 40,
+                  "booths": 1, "boothCapacityPerHour": 60, "aovEvent": 25000, "crmCapturePct": 20, "unitsPerTrx": 1.3}
+
+
+def event_inputs(promo, profile):
+    ev = {**EVENT_DEFAULTS, **(profile.get("eventDefaults") or {})}
+    for k, v in (promo.get("event") or {}).items():
+        if v not in (None, ""):
+            ev[k] = v
+    for k in EVENT_DEFAULTS:
+        ev[k] = float(ev[k])
+    return ev
+
+
+def event_scorecard(promo, ekonomi_auto=None):
+    sc = (promo.get("event") or {}).get("score") or {}
+    if not sc and ekonomi_auto is None:
+        return None
+    rows, total, filled = [], 0.0, 0
+    for key, label, w in EVENT_SCORECARD:
+        v = sc.get(key)
+        auto = False
+        if key == "ekonomi" and v in (None, "") and ekonomi_auto is not None:
+            v, auto = ekonomi_auto, True
+        if v in (None, ""):
+            continue
+        v = max(1.0, min(5.0, float(v)))
+        filled += 1
+        total += v * w
+        rows.append({"key": key, "label": label, "weight": w, "score": v, "auto": auto})
+    wsum = sum(w for k, _, w in EVENT_SCORECARD if any(r["key"] == k for r in rows))
+    if filled < len(EVENT_SCORECARD):
+        return {"score": round(total / wsum, 2) if wsum else None, "complete": False, "rows": rows,
+                "decision": "Lengkapi scorecard"}
+    score = round(total, 2)
+    decision = "Lanjut ke Gate" if score >= 3.8 else "Lanjut dengan negosiasi" if score >= 3.0 else "Tolak"
+    return {"score": score, "complete": True, "rows": rows, "decision": decision}
+
+
+def event_scenarios(promo, unit, u, profile):
+    """Booth economics: footfall × capture × conversion, capped by booth capacity; every sale is incremental."""
+    ev = event_inputs(promo, profile)
+    days = max(ev["days"], 1)
+    hours = max(ev["hoursPerDay"], 1)
+    booths = max(ev["booths"], 1)
+    upt = max(ev["unitsPerTrx"], 1)
+    cap_trx_day = ev["boothCapacityPerHour"] * hours / upt * booths
+    promo_units = sum(int(x["qty"]) for x in u["rows"]) or 1
+    normal_cm_pct = pct(unit["normalCM"], unit["listPrice"])
+    fixed = sum(int(f.get("amount") or 0) for f in promo.get("fixedCosts") or [])
+    sc_in = promo.get("scenarioInputs") or {}
+    defaults = {"pesimis": {"takeRate": 20, "footfallMult": 0.7}, "target": {"takeRate": 30, "footfallMult": 1.0},
+                "optimis": {"takeRate": 40, "footfallMult": 1.3}}
+    out = {}
+    for k in ("pesimis", "target", "optimis"):
+        si = {**defaults[k], **{kk: vv for kk, vv in (sc_in.get(k) or {}).items() if kk in ("takeRate", "footfallMult")}}
+        tr = float(si["takeRate"]) / 100
+        foot = ev["footfallPerDay"] * float(si["footfallMult"])
+        demand = foot * ev["capturePct"] / 100 * ev["conversionPct"] / 100 * booths
+        trx = min(demand, cap_trx_day)
+        promo_trx = trx * tr
+        normal_trx = trx - promo_trx
+        rev_day = promo_trx * unit["customerPays"] + normal_trx * ev["aovEvent"]
+        cm_day = promo_trx * unit["cm"] + normal_trx * ev["aovEvent"] * normal_cm_pct
+        tot_trx = trx * days
+        tot_cm = cm_day * days
+        contribution = tot_cm - fixed
+        merch_disc = promo_trx * days * (unit["merchantDiscount"] + unit["extraCost"])
+        invest = fixed + merch_disc
+        blended = cm_day / trx if trx else 0
+        crm = tot_trx * ev["crmCapturePct"] / 100
+        out[k] = {
+            "takeRate": si["takeRate"], "trafficUplift": 0, "footfallMult": si["footfallMult"],
+            "unitsPerOutletDay": round(promo_trx, 1), "totalUnits": r(promo_trx * days),
+            "incRevenue": r(rev_day * days), "incCM": r(tot_cm), "merchantDiscount": r(merch_disc),
+            "platformSubsidy": r(promo_trx * days * unit["platformDiscount"]),
+            "platformFees": r(promo_trx * days * unit["platformFees"] + normal_trx * days * ev["aovEvent"] * pct(unit["platformFees"], unit["merchantGross"])),
+            "fixedCosts": fixed, "contribution": r(contribution), "investment": r(invest),
+            "roi": (contribution / invest) if invest else None,
+            "revenuePerOutletDay": r(rev_day / booths), "baselineRevenuePerOutletDay": 0, "revenueChangePct": None,
+            "capacityOk": demand <= cap_trx_day,
+            "event": {
+                "trxDemandPerDay": round(demand, 1), "trxPerDay": round(trx, 1), "capacityTrxPerDay": round(cap_trx_day, 1),
+                "totalTrx": r(tot_trx), "breakevenTrx": r(fixed / blended) if blended > 0 else None,
+                "breakevenCover": (tot_trx / (fixed / blended)) if blended > 0 and fixed else None,
+                "costPerTrx": r(fixed / tot_trx) if tot_trx else None, "crmAcquired": r(crm),
+                "costPerCRM": r(fixed / crm) if crm else None, "targetPerHour": round(trx / hours / booths, 1),
+                "stockPortions": r((promo_trx * promo_units + normal_trx * upt) * days * 1.2),
+                "blendedCmPerTrx": r(blended), "normalCmPct": normal_cm_pct,
+            },
+        }
+    meta_ev = {**ev, "fixedCosts": fixed}
+    out["meta"] = {"outletDays": r(days * booths), "days": int(days), "outlets": booths, "openRate": 100,
+                   "trxPerOutletDay": out["target"]["event"]["trxPerDay"], "event": meta_ev}
+    be = out["target"]["event"]["breakevenCover"]
+    eko = None if be is None else (5 if be >= 2 else 4 if be >= 1.5 else 3 if be >= 1.2 else 2 if be >= 1 else 1)
+    out["meta"]["scorecard"] = event_scorecard(promo, eko)
+    return out
 
 
 def scenarios(promo, unit, inc, baseline, profile):
@@ -624,7 +732,9 @@ def health_score(promo, unit, scen, settings, profile, mech):
     add("safety", "Item aman diskon", 10, 0 if bad_items else 100,
         ("Item bermargin rendah didiskon/gratis: " + ", ".join(bad_items)) if bad_items else "Tidak ada item bermargin rendah yang didiskon")
     q, c = promo.get("quotaPerOutletDay"), promo.get("capacityPerOutletDay")
-    if q and c and float(q) > float(c):
+    if profile.get("channelType") == "event":
+        pass  # booth capacity is scored from the event model below
+    elif q and c and float(q) > float(c):
         add("capacity", "Kapasitas", 10, 0, f"Kuota {q} > kapasitas {c}/outlet/hari")
         hard.append("Kuota melebihi kapasitas")
     elif q and c:
@@ -632,7 +742,20 @@ def health_score(promo, unit, scen, settings, profile, mech):
     else:
         add("capacity", "Kapasitas", 10, 50, "Kuota/kapasitas belum diisi")
     tc = scen["target"]["contribution"]
-    add("scenario", "Contribution skenario Target", 5, 100 if tc > 0 else 0, f"Rp{tc:,}".replace(",", "."))
+    ev = scen["target"].get("event")
+    if ev:
+        cover = ev["breakevenCover"]
+        if cover is not None:
+            add("breakevenEvent", "Break-even event", 15, 100 if cover >= 1.3 else 50 if cover >= 1 else 0,
+                f"{ev['totalTrx']:,} transaksi vs break-even {ev['breakevenTrx']:,}".replace(",", "."))
+        dem, cap = ev["trxDemandPerDay"], ev["capacityTrxPerDay"]
+        add("boothCap", "Kapasitas booth", 10, 100 if dem <= cap else 50 if dem <= cap * 1.2 else 0,
+            f"Permintaan {dem:.0f} trx/hari, kapasitas {cap:.0f}")
+        add("scenario", "Event contribution (Target)", 15, 100 if tc > 0 else 0, f"Rp{tc:,}".replace(",", "."))
+        if tc <= 0:
+            hard.append("Event contribution negatif")
+    else:
+        add("scenario", "Contribution skenario Target", 5, 100 if tc > 0 else 0, f"Rp{tc:,}".replace(",", "."))
     tw = sum(x["weight"] for x in comps)
     score = sum(x["weight"] * x["score"] for x in comps) / tw if tw else 0
     label = _label(score, 75, 50, ("Sehat", "Waspada", "Tidak Sehat"))
@@ -747,12 +870,20 @@ def gate_status(promo, h, m, scen, profile, unit):
     if not promo.get("trackingReady"):
         conds.append("Siapkan SKU/kode voucher di POS untuk tracking")
     q, c = promo.get("quotaPerOutletDay"), promo.get("capacityPerOutletDay")
-    if not (q and c):
+    if not (q and c) and profile.get("channelType") != "event":
         conds.append("Isi kuota dan kapasitas per outlet/hari (konfirmasi Ops)")
     if scen["target"]["contribution"] <= 0:
         conds.append("Contribution skenario Target belum positif")
+    sc = (scen.get("meta") or {}).get("scorecard")
+    if profile.get("channelType") == "event":
+        if sc and sc.get("complete") and sc["score"] < 3.0:
+            return {"status": "HOLD", "conditions": [f"Event Scorecard {sc['score']:.2f} < 3,0 — tolak event ini"]}
+        if not sc or not sc.get("complete"):
+            conds.append("Lengkapi Event Scorecard (8 kriteria)")
+        elif sc["score"] < 3.8:
+            conds.append(f"Event Scorecard {sc['score']:.2f}: negosiasi sewa, posisi booth, atau revenue share")
     if not profile.get("verified"):
-        conds.append(f"Validasi biaya platform {profile.get('label')}")
+        conds.append(f"Validasi biaya {'event (kontrak EO)' if profile.get('channelType') == 'event' else 'platform'} {profile.get('label')}")
     if unit.get("pendingPrograms"):
         conds.append("Isi tarif program: " + ", ".join(unit["pendingPrograms"]))
     return {"status": "GO" if not conds else "GO WITH CONDITION", "conditions": conds}
@@ -762,6 +893,10 @@ def rp(x) -> str:
     x = r(x)
     s = f"{abs(x):,}".replace(",", ".")
     return ("−Rp" if x < 0 else "Rp") + s
+
+
+def num_id(x) -> str:
+    return f"{r(x or 0):,}".replace(",", ".")
 
 
 def takeaway(promo, out):
@@ -774,8 +909,16 @@ def takeaway(promo, out):
     if out["health"]["label"] == "Sehat":
         good.append(f"sehat dengan CM {rp(u['cm'])} ({u['cmPct']*100:.1f}%)")
     first = f"{nama} di {plat} " + (" dan ".join(good) if good else f"menghasilkan CM {rp(u['cm'])} per unit") + "."
+    ev = out["scenarios"]["target"].get("event")
+    if ev and out["scenarios"]["target"]["contribution"] > 0:
+        first += (f" Event diperkirakan {num_id(ev['totalTrx'])} transaksi (break-even {num_id(ev['breakevenTrx'])}) "
+                  f"dengan contribution {rp(out['scenarios']['target']['contribution'])}.")
     risk = None
-    if u["cm"] <= 0:
+    ev = out["scenarios"]["target"].get("event")
+    if ev and out["scenarios"]["target"]["contribution"] <= 0:
+        risk = (f"event contribution {rp(out['scenarios']['target']['contribution'])}; perlu {num_id(ev['breakevenTrx'])} transaksi untuk balik modal, "
+                f"ekspektasi {num_id(ev['totalTrx'])}") if ev["breakevenTrx"] else "event tidak balik modal"
+    elif u["cm"] <= 0:
         risk = f"setiap transaksi rugi {rp(-u['cm'])}"
     elif out["health"]["label"] != "Sehat" or out["margin"]["label"] == "Buruk":
         if u["effectiveTakeRate"] and u["effectiveTakeRate"] > 0.2:
@@ -874,6 +1017,19 @@ def fix_suggestions(promo, products, profile, area, settings, baseline, out):
     if q and c and float(q) > float(c):
         fixes.append({"type": "quota", "title": f"Batasi kuota ke {c}/outlet/hari", "detail": "Kuota tidak boleh melebihi kapasitas.",
                       "patch": {"quotaPerOutletDay": c}})
+    evt = out["scenarios"]["target"].get("event")
+    if evt and out["scenarios"]["target"]["contribution"] <= 0:
+        fixed = out["scenarios"]["target"]["fixedCosts"]
+        max_fixed = out["scenarios"]["target"]["incCM"]
+        fixes.append({"type": "event_fixed", "title": f"Negosiasi biaya tetap maks. {rp(max_fixed)}",
+                      "detail": f"Biaya tetap sekarang {rp(fixed)}. Turunkan sewa/revenue share atau tambah hari event.", "patch": {}})
+        mk = float((profile.get("pricing") or {}).get("markupPct") or 0)
+        if mk < 20:
+            fixes.append({"type": "event_markup", "title": "Pakai harga event (markup) di profil",
+                          "detail": "Event besar biasanya memakai harga 10–20% di atas outlet. Ubah di Platform & Biaya.", "patch": {}})
+    if evt and not evt["trxDemandPerDay"] <= evt["capacityTrxPerDay"]:
+        fixes.append({"type": "event_cap", "title": "Tambah kapasitas booth",
+                      "detail": f"Permintaan {evt['trxDemandPerDay']:.0f} trx/hari melebihi kapasitas {evt['capacityTrxPerDay']:.0f}. Tambah kasir/crew atau sederhanakan menu.", "patch": {}})
     if profile.get("channelType") == "marketplace" and u["unitsPerOrder"] < 2:
         fixes.append({"type": "bundle2", "title": "Jual bundle 2 pack", "detail": "Biaya per order dan packaging dingin terbagi ke 2 pack.",
                       "patch": {"overrides": {**(promo.get("overrides") or {}), "avgUnitsPerOrder": 2}}})
@@ -939,7 +1095,7 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
     step = int(settings.get("roundingStep") or 500)
     base_promo = {k: req.get(k) for k in ("objective", "periodStart", "periodEnd", "outlets", "openRate",
                                          "trxPerOutletDay", "quotaPerOutletDay", "capacityPerOutletDay",
-                                         "scenarioInputs", "fixedCosts", "trackingReady", "overrides")}
+                                         "scenarioInputs", "fixedCosts", "trackingReady", "overrides", "event")}
     base_promo["objective"] = objective
     cands: list[dict] = []
 

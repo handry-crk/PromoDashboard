@@ -48,7 +48,8 @@ export const STATUS = {
   running: "Running", done: "Selesai", rejected: "Ditolak",
 };
 
-export const CH_LABEL = { offline: "Offline", online_food: "Online Food", marketplace: "Marketplace" };
+export const CH_LABEL = { offline: "Offline", online_food: "Online Food", marketplace: "Marketplace", event: "Event" };
+export const CH_ORDER = ["offline", "online_food", "marketplace", "event"];
 
 export function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
