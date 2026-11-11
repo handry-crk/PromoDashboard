@@ -8,6 +8,10 @@ def H(t):
     return {"Authorization": f"Bearer {t}"}
 
 
+def invite(ha, role):
+    return c.post("/api/invites", headers=H(ha), json={"role": role}).json()["token"]
+
+
 def test_flow():
     for col in db.list_collection_names():
         db[col].drop()
@@ -15,22 +19,28 @@ def test_flow():
     r = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"})
     assert r.status_code == 200 and r.json()["user"]["isAdmin"] and r.json()["user"]["role"] == "head"
     ha = r.json()["token"]
-    # only the two slots are open, finance is not
-    assert c.post("/api/auth/register", json={"name": "X", "role": "finance", "pin": "1111", "email": "x@citarasakuliner.com"}).status_code == 400
-    r = c.post("/api/auth/register", json={"name": "Fina", "role": "revenue_growth", "pin": "2222", "email": "fina@citarasakuliner.com"}).json()
+    # without invite nobody can register
+    assert c.post("/api/auth/register", json={"name": "X", "role": "team_leader", "pin": "1111", "email": "x@citarasakuliner.com"}).status_code == 403
+    assert c.post("/api/auth/register", json={"name": "X", "pin": "1111", "email": "x@citarasakuliner.com", "invite": "palsu"}).status_code == 403
+    inv_rg, inv_tl = invite(ha, "revenue_growth"), invite(ha, "team_leader")
+    assert c.post("/api/invites", headers=H(ha), json={"role": "team_leader"}).status_code == 400  # already an active invite
+    assert c.get(f"/api/public/invite/{inv_tl}").json()["label"] == "Marketing Team Leader"
+    r = c.post("/api/auth/register", json={"name": "Fina", "pin": "2222", "email": "fina@citarasakuliner.com", "invite": inv_rg}).json()
     assert r["pending"]
-    r = c.post("/api/auth/register", json={"name": "Sinta", "role": "team_leader", "pin": "3333", "email": "sinta@citarasakuliner.com"}).json()
+    r = c.post("/api/auth/register", json={"name": "Sinta", "pin": "3333", "email": "sinta@citarasakuliner.com", "invite": inv_tl}).json()
     assert r["pending"]
-    # slot full
-    assert "sudah terisi" in c.post("/api/auth/register", json={"name": "Budi", "role": "team_leader", "pin": "4444", "email": "budi@citarasakuliner.com"}).json()["detail"]
+    # invite is single use
+    assert c.post("/api/auth/register", json={"name": "Budi", "pin": "4444", "email": "budi@citarasakuliner.com", "invite": inv_tl}).status_code == 403
     pub = c.get("/api/public/members").json()
-    assert [m["name"] for m in pub["members"]] == ["Handry"] and not any(s["open"] for s in pub["slots"])
+    assert "members" not in pub and pub["hasAny"]
     ids = {m["name"]: m["id"] for m in c.get("/api/state", headers=H(ha)).json()["members"]}
-    assert c.post("/api/auth/login", json={"memberId": ids["Sinta"], "pin": "3333"}).status_code == 403
+    assert c.post("/api/auth/login", json={"identifier": "Sinta", "pin": "3333"}).status_code == 403
+    assert c.post("/api/auth/login", json={"identifier": "orang-luar", "pin": "3333"}).status_code == 401
     for n in ("Fina", "Sinta"):
         assert c.post(f"/api/members/{ids[n]}/approve", headers=H(ha), json={"decision": "approve"}).status_code == 200
-    fi = c.post("/api/auth/login", json={"memberId": ids["Fina"], "pin": "2222"}).json()["token"]
-    pl = c.post("/api/auth/login", json={"memberId": ids["Sinta"], "pin": "3333"}).json()["token"]
+    fi = c.post("/api/auth/login", json={"identifier": "fina@citarasakuliner.com", "pin": "2222"}).json()["token"]
+    pl = c.post("/api/auth/login", json={"identifier": "sinta", "pin": "3333"}).json()["token"]
+    assert c.post("/api/auth/admin-login", json={"pin": "1234"}).status_code == 404
     assert c.get("/api/state", headers=H(pl)).json()["user"]["perm"] == "planner"
     assert c.post("/api/seed/crk", headers=H(ha)).status_code == 200
     st = c.get("/api/state", headers=H(ha)).json()
@@ -76,10 +86,12 @@ def test_flow():
     assert rep["promos"] and "hpp" not in str(rep).lower() and "cm" not in rep["promos"][0]["areas"].get("bandung", {})
     assert c.get("/api/report?t=salah").status_code == 404
     # PIN lock
-    mid = ids["Sinta"]
     for _ in range(5):
-        c.post("/api/auth/login", json={"memberId": mid, "pin": "0000"})
-    assert c.post("/api/auth/login", json={"memberId": mid, "pin": "3333"}).status_code == 429
+        c.post("/api/auth/login", json={"identifier": "Sinta", "pin": "0000"})
+    assert c.post("/api/auth/login", json={"identifier": "Sinta", "pin": "3333"}).status_code == 429
+    mid = ids["Sinta"]
+    assert c.post(f"/api/members/{mid}/reset-pin", headers=H(ha), json={"pin": "5555"}).status_code == 200
+    assert c.post("/api/auth/login", json={"identifier": "Sinta", "pin": "5555"}).status_code == 200
     assert c.get("/api/health").json()["ok"]
 
 
@@ -88,7 +100,8 @@ def test_status_rules_and_multi_area():
         db[col].drop()
     ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
     c.post("/api/seed/crk", headers=H(ha))
-    assert c.post("/api/auth/register", json={"name": ".*", "role": "team_leader", "pin": "1234", "email": "a@citarasakuliner.com"}).status_code == 200
+    tok = c.post("/api/invites", headers=H(ha), json={"role": "team_leader"}).json()["token"]
+    assert c.post("/api/auth/register", json={"name": ".*", "pin": "1234", "email": "a@citarasakuliner.com", "invite": tok}).status_code == 200
     P = {p["nama"]: p for p in c.get("/api/state", headers=H(ha)).json()["promos"]}
     assert c.post(f"/api/promos/{P['Braga Pairing']['id']}/submit", headers=H(ha)).status_code == 400
     r = c.put(f"/api/promos/{P['Paket AA 30 Ribu']['id']}", headers=H(ha), json={"params": {"packagePrice": 36000}}).json()

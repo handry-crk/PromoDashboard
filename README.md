@@ -54,7 +54,11 @@ pytest -q backend/tests                    # jalankan dari folder backend
 - Hasil aktual: contribution dihitung dari tambahan revenue × rasio CM/revenue skenario Target − biaya tetap aktual (estimasi). Untuk angka persis, isi potongan platform dari laporan settlement.
 
 ## Pendaftaran anggota
-- Pendaftaran mandiri hanya untuk 2 slot: **Marketing Team Leader** (1) dan **Revenue Growth Specialist** (1). Slot yang sudah terisi atau menunggu approval tidak bisa dipakai lagi. Kalau pendaftaran ditolak, slotnya terbuka kembali.
+- **Hanya lewat link undangan.** Marketing Manager membuat link di Settings → Undang anggota. Satu link untuk satu orang, berlaku 7 hari (env `INVITE_DAYS`), bisa dikunci ke satu email, dan bisa dibatalkan. Tanpa link, form daftar tidak muncul dan API menolak (403).
+- Login dengan mengetik nama atau email kantor + PIN. Daftar nama anggota tidak lagi tampil di halaman publik.
+- Salah PIN 5× per akun atau 20× per alamat IP dalam 15 menit → dikunci 15 menit. Kunci disimpan di database, jadi tidak hilang saat restart.
+- Login PIN Admin cadangan mati, kecuali env `ENABLE_ADMIN_PIN=true`.
+- Slot mandiri: 2 slot: **Marketing Team Leader** (1) dan **Revenue Growth Specialist** (1). Slot yang sudah terisi atau menunggu approval tidak bisa dipakai lagi. Kalau pendaftaran ditolak, slotnya terbuka kembali.
 - Email wajib `@citarasakuliner.com`. Domain bisa diganti lewat env `EMAIL_DOMAIN`.
 - Akun baru berstatus **menunggu** dan tidak bisa login sampai disetujui di **Settings → Approval anggota baru**.
 - Role lain (Promo Planner, Finance, Channel PIC, Viewer) hanya bisa diberikan Marketing Manager lewat daftar Anggota.

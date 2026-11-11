@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Copy, RefreshCw, KeyRound } from "lucide-react";
 import { api, CH_LABEL } from "../lib";
@@ -35,6 +35,20 @@ export default function Settings({ st, reload }) {
     catch (e) { toast(e.message, "bad"); }
   };
   const pending = st.members.filter((m) => m.status === "pending");
+  const [invites, setInvites] = useState([]);
+  const [invRole, setInvRole] = useState("team_leader");
+  const [invEmail, setInvEmail] = useState("");
+  const loadInv = () => api("/invites").then(setInvites).catch(() => {});
+  useEffect(() => { if (isAdmin) loadInv(); }, []); // eslint-disable-line
+  const inviteUrl = (tk) => `${window.location.origin}/?undangan=${tk}`;
+  const makeInvite = async () => {
+    try {
+      const r = await api("/invites", { method: "POST", body: { role: invRole, email: invEmail } });
+      await navigator.clipboard?.writeText(inviteUrl(r.token)).catch(() => {});
+      toast("Link undangan dibuat dan disalin"); setInvEmail(""); loadInv();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  const revoke = async (tk) => { try { await api(`/invites/${tk}`, { method: "DELETE" }); loadInv(); } catch (e) { toast(e.message, "bad"); } };
   const resetPin = async () => {
     try { await api(`/members/${pin.id}/reset-pin`, { method: "POST", body: { pin: pin.pin } }); toast(`PIN ${pin.name} direset`); setPin(null); }
     catch (e) { toast(e.message, "bad"); }
@@ -46,6 +60,34 @@ export default function Settings({ st, reload }) {
   return (
     <div className="space-y-5">
       <Title a="Settings" b="dashboard" />
+      <section className="card p-4">
+        <div className="font-extrabold mb-1">Undang anggota</div>
+        <p className="text-[13px] text-ink/60 mb-3">Pendaftaran hanya lewat link ini. Satu link untuk satu orang, berlaku 7 hari, dan tetap perlu approval Anda.</p>
+        <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2">
+          <select className="field" value={invRole} onChange={(e) => setInvRole(e.target.value)} aria-label="Role undangan">
+            {Object.entries(st.roles).filter(([k]) => k !== "head").map(([k, l]) => {
+              const sl = (st.slots || []).find((x) => x.role === k);
+              return <option key={k} value={k} disabled={sl && !sl.open}>{l}{sl ? ` (${sl.used}/${sl.quota})` : ""}</option>;
+            })}
+          </select>
+          <input className="field" placeholder={`Email (opsional) @${st.emailDomain}`} value={invEmail} onChange={(e) => setInvEmail(e.target.value)} aria-label="Email undangan" />
+          <button className="btn-primary" onClick={makeInvite}>Buat link</button>
+        </div>
+        <div className="mt-3 space-y-2">
+          {invites.map((i) => (
+            <div key={i.token} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-cream/70 px-3 py-2 text-[13px]">
+              <div><b>{st.roles[i.role]}</b>{i.email ? ` · ${i.email}` : ""} · <span className={i.state === "aktif" ? "text-ok font-bold" : "text-ink/55"}>{i.state}</span>
+                {i.usedByName && <span className="text-ink/60"> oleh {i.usedByName}</span>}
+                <div className="text-[11px] text-ink/50">Berlaku s.d. {new Date(i.expiresAt).toLocaleString("id-ID")}</div></div>
+              {i.state === "aktif" && <div className="flex gap-2">
+                <button className="btn-soft !min-h-[34px] !text-[12px]" onClick={() => navigator.clipboard?.writeText(inviteUrl(i.token)).then(() => toast("Link disalin"))}><Copy size={14} />Copy</button>
+                <button className="btn-ghost !min-h-[34px] !text-[12px]" onClick={() => revoke(i.token)}>Batalkan</button>
+              </div>}
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="card p-4">
         <div className="font-extrabold mb-1">Approval anggota baru</div>
         <p className="text-[13px] text-ink/60 mb-3">Slot pendaftaran: {(st.slots || []).map((s) => `${s.label} ${s.used}/${s.quota}`).join(" · ")}. Wajib email @{st.emailDomain}.</p>
@@ -130,7 +172,7 @@ export default function Settings({ st, reload }) {
             </div>
           ))}
         </div>
-        <div className="mt-4 max-w-xs"><label className="lbl">Ganti PIN Admin cadangan</label>
+        <div className="mt-4 max-w-xs"><label className="lbl">PIN Admin cadangan (aktif hanya bila ENABLE_ADMIN_PIN=true)</label>
           <div className="flex gap-2"><input className="field" type="password" inputMode="numeric" maxLength={6} id="adminpin" />
             <button className="btn-ghost" onClick={() => { const v = document.getElementById("adminpin").value; if (v.length >= 4) save({ adminPin: v }); }}>Simpan</button></div></div>
       </section>

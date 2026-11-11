@@ -140,18 +140,32 @@ def public_settings(s):
     return s
 
 
-FAILS: dict[str, list[float]] = {}
+LOCK_MAX, LOCK_WINDOW = 5, 900          # 5 salah dalam 15 menit → kunci 15 menit (per akun)
+IP_MAX = 20                              # 20 salah dalam 15 menit dari satu IP → kunci IP
 
 
-def guard_lock(key: str):
-    arr = [t for t in FAILS.get(key, []) if time.time() - t < 900]
-    FAILS[key] = arr
-    if len(arr) >= 5:
-        err(429, "PIN salah 5 kali. Coba lagi dalam 15 menit atau minta Admin reset PIN.")
+def client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")) or "?"
 
 
-def fail(key: str):
-    FAILS.setdefault(key, []).append(time.time())
+def recent_fails(key: str) -> int:
+    since = time.time() - LOCK_WINDOW
+    return db.login_fails.count_documents({"key": key, "t": {"$gte": since}})
+
+
+def guard_lock(key: str, limit: int = LOCK_MAX):
+    if recent_fails(key) >= limit:
+        err(429, "Terlalu banyak percobaan salah. Coba lagi dalam 15 menit atau minta Marketing Manager reset PIN.")
+
+
+def fail(*keys: str):
+    for k in keys:
+        db.login_fails.insert_one({"key": k, "t": time.time()})
+
+
+def clear_fails(key: str):
+    db.login_fails.delete_many({"key": key})
 
 
 def make_session(member: dict) -> str:
@@ -360,16 +374,42 @@ def health():
     return {"ok": ok, "db": DB_KIND}
 
 
+ENABLE_ADMIN_PIN = os.getenv("ENABLE_ADMIN_PIN", "false").lower() == "true"
+INVITE_DAYS = int(os.getenv("INVITE_DAYS", "7"))
+
+
 @app.get("/api/public/members")
 def public_members():
-    ms = [{"id": m["id"], "name": m["name"], "role": m["role"]} for m in db.members.find({"active": {"$ne": False}, "hidden": {"$ne": True}})
-          if m.get("status", "approved") == "approved"]
-    return {"members": sorted(ms, key=lambda x: x["name"]), "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN,
-            "hasAny": db.members.count_documents({"hidden": {"$ne": True}}) > 0}
+    # Sengaja tidak mengirim daftar nama anggota.
+    return {"hasAny": db.members.count_documents({"hidden": {"$ne": True}}) > 0, "emailDomain": EMAIL_DOMAIN,
+            "adminPin": ENABLE_ADMIN_PIN, "roles": ROLES}
+
+
+def find_invite(token: str):
+    if not token:
+        return None
+    inv = db.invites.find_one({"token": token})
+    if not inv or inv.get("usedAt") or inv.get("revoked"):
+        return None
+    if datetime.fromisoformat(inv["expiresAt"]) < datetime.now(timezone.utc):
+        return None
+    return inv
+
+
+@app.get("/api/public/invite/{token}")
+def public_invite(token: str):
+    inv = find_invite(token)
+    if not inv:
+        err(404, "Link undangan tidak valid, sudah dipakai, atau kedaluwarsa. Minta link baru ke Marketing Manager.")
+    return {"role": inv["role"], "label": ROLES.get(inv["role"], inv["role"]), "expiresAt": inv["expiresAt"],
+            "emailDomain": EMAIL_DOMAIN}
 
 
 @app.post("/api/auth/register")
-def register(body: dict):
+def register(body: dict, request: Request):
+    ip = f"ipreg:{client_ip(request)}"
+    guard_lock(ip, IP_MAX)
+    fail(ip)  # setiap percobaan daftar dihitung untuk membatasi spam
     name = (body.get("name") or "").strip()
     pin = str(body.get("pin") or "")
     role = body.get("role") or ""
@@ -380,21 +420,33 @@ def register(body: dict):
         err(400, f"Gunakan email kantor @{EMAIL_DOMAIN}.")
     if not (pin.isdigit() and 4 <= len(pin) <= 6):
         err(400, "PIN harus 4–6 angka.")
+    first = db.members.count_documents({"hidden": {"$ne": True}}) == 0
+    inv = None
+    if not first:
+        inv = find_invite(body.get("invite") or "")
+        if not inv:
+            err(403, "Pendaftaran hanya lewat link undangan dari Marketing Manager.")
+        if inv.get("email") and inv["email"] != email:
+            err(400, f"Undangan ini untuk {inv['email']}.")
+        role = inv["role"]
     if db.members.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "status": {"$ne": "rejected"}}):
-        err(400, "Nama sudah terdaftar. Pilih nama Anda di halaman login.")
+        err(400, "Nama sudah terdaftar. Gunakan nama lengkap yang berbeda.")
     if db.members.find_one({"email": email, "status": {"$ne": "rejected"}}):
         err(400, "Email ini sudah terdaftar.")
-    first = db.members.count_documents({"hidden": {"$ne": True}}) == 0
-    if not first:
+    if not first and role in SIGNUP_SLOTS:
         slot = next((x for x in slot_status() if x["role"] == role), None)
         if not slot:
             err(400, "Pilih slot yang tersedia: " + ", ".join(ROLES[k] for k in SIGNUP_SLOTS) + ".")
         if not slot["open"]:
             err(400, f"Slot {slot['label']} sudah terisi. Hubungi Marketing Manager.")
+    if not first and role not in ROLES:
+        err(400, "Role undangan tidak dikenal.")
     m = {"id": secrets.token_hex(6), "name": name, "role": "head" if first else role, "email": email,
          "phone": body.get("phone", ""), "pinHash": hash_pin(pin), "active": True, "isAdmin": first,
          "status": "approved" if first else "pending", "platforms": [], "createdAt": now_iso()}
     db.members.insert_one(m)
+    if inv:
+        db.invites.update_one({"token": inv["token"]}, {"$set": {"usedAt": now_iso(), "usedBy": m["id"], "usedByName": name}})
     get_settings()
     if not first:
         return {"pending": True, "message": f"Pendaftaran {ROLES[role]} terkirim. Anda bisa login setelah disetujui Marketing Manager."}
@@ -402,31 +454,40 @@ def register(body: dict):
 
 
 @app.post("/api/auth/login")
-def login(body: dict):
-    mid = body.get("memberId")
-    key = f"m:{mid}"
+def login(body: dict, request: Request):
+    ident = (body.get("identifier") or "").strip()
+    ip = f"ip:{client_ip(request)}"
+    guard_lock(ip, IP_MAX)
+    m = None
+    if ident:
+        if "@" in ident:
+            m = db.members.find_one({"email": ident.lower(), "status": {"$ne": "rejected"}})
+        else:
+            m = db.members.find_one({"name": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}, "status": {"$ne": "rejected"},
+                                     "hidden": {"$ne": True}})
+    key = f"m:{m['id']}" if m else f"u:{ident.lower()}"
     guard_lock(key)
-    m = db.members.find_one({"id": mid})
-    if not m or not m.get("active", True):
-        err(404, "Nama tidak ditemukan.")
+    if not m or not m.get("active", True) or not check_pin(str(body.get("pin") or ""), m.get("pinHash", "")):
+        fail(key, ip)
+        err(401, "Nama/email atau PIN salah.")
+    clear_fails(key)
     if m.get("status", "approved") == "pending":
         err(403, "Akun Anda masih menunggu approval Marketing Manager.")
     if m.get("status") == "rejected":
         err(403, "Pendaftaran Anda ditolak. Hubungi Marketing Manager.")
-    if not check_pin(str(body.get("pin") or ""), m["pinHash"]):
-        fail(key)
-        left = 5 - len(FAILS.get(key, []))
-        err(401, f"PIN salah. Sisa {max(left,0)} percobaan." if left > 0 else "PIN salah 5 kali. Coba lagi dalam 15 menit.")
-    FAILS.pop(key, None)
     return {"token": make_session(m), "user": {k: v for k, v in clean(m).items() if k != "pinHash"}}
 
 
 @app.post("/api/auth/admin-login")
-def admin_login(body: dict):
+def admin_login(body: dict, request: Request):
+    if not ENABLE_ADMIN_PIN:
+        err(404, "Login PIN Admin dinonaktifkan.")
+    ip = f"ip:{client_ip(request)}"
+    guard_lock(ip, IP_MAX)
     guard_lock("admin")
     s = get_settings()
     if not check_pin(str(body.get("pin") or ""), s["adminPinHash"]):
-        fail("admin")
+        fail("admin", ip)
         err(401, "PIN Admin salah.")
     m = db.members.find_one({"id": "admin"})
     if not m:
@@ -915,6 +976,46 @@ def put_member(mid: str, body: dict, user=Depends(require("head"))):
     return {"ok": True}
 
 
+@app.post("/api/invites")
+def create_invite(body: dict, user=Depends(require("head"))):
+    role = body.get("role")
+    if role not in ROLES or role == "head":
+        err(400, "Pilih role yang akan diundang.")
+    if role in SIGNUP_SLOTS:
+        slot = next(x for x in slot_status() if x["role"] == role)
+        pending_inv = db.invites.count_documents({"role": role, "usedAt": None, "revoked": {"$ne": True},
+                                                  "expiresAt": {"$gt": now_iso()}})
+        if not slot["open"]:
+            err(400, f"Slot {slot['label']} sudah terisi.")
+        if pending_inv >= slot["quota"] - slot["used"]:
+            err(400, f"Masih ada undangan {slot['label']} yang aktif. Batalkan dulu bila ingin membuat yang baru.")
+    email = (body.get("email") or "").strip().lower()
+    if email and not email.endswith("@" + EMAIL_DOMAIN):
+        err(400, f"Email undangan harus @{EMAIL_DOMAIN}.")
+    from datetime import timedelta
+    inv = {"token": secrets.token_urlsafe(24), "role": role, "email": email or None, "createdBy": user["name"], "createdAt": now_iso(),
+           "expiresAt": (datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS)).isoformat(), "usedAt": None}
+    db.invites.insert_one(inv)
+    return clean(inv)
+
+
+@app.get("/api/invites")
+def list_invites(user=Depends(require("head"))):
+    out = []
+    for i in db.invites.find({}).sort("createdAt", -1).limit(30):
+        i = clean(i)
+        i["state"] = "dipakai" if i.get("usedAt") else "dibatalkan" if i.get("revoked") else \
+            "kedaluwarsa" if i["expiresAt"] < now_iso() else "aktif"
+        out.append(i)
+    return out
+
+
+@app.delete("/api/invites/{token}")
+def revoke_invite(token: str, user=Depends(require("head"))):
+    db.invites.update_one({"token": token}, {"$set": {"revoked": True}})
+    return {"ok": True}
+
+
 @app.post("/api/members/{mid}/approve")
 def approve_member(mid: str, body: dict, user=Depends(require("head"))):
     m = db.members.find_one({"id": mid})
@@ -934,7 +1035,7 @@ def reset_pin(mid: str, body: dict, user=Depends(require("head"))):
     if not (pin.isdigit() and 4 <= len(pin) <= 6):
         err(400, "PIN baru harus 4–6 angka.")
     db.members.update_one({"id": mid}, {"$set": {"pinHash": hash_pin(pin)}})
-    FAILS.pop(f"m:{mid}", None)
+    clear_fails(f"m:{mid}")
     return {"ok": True}
 
 
