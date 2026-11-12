@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays } from "lucide-react";
+import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot } from "lucide-react";
 import { api, setToken, getToken } from "./lib";
 import { Loader, useToast, Sheet } from "./ui";
 import Login from "./pages/Login";
@@ -14,6 +14,7 @@ import Platforms from "./pages/Platforms";
 import Settings from "./pages/Settings";
 import Report from "./pages/Report";
 import CalendarPage from "./pages/Calendar";
+import Assistant, { BotFace } from "./pages/Assistant";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -34,6 +35,7 @@ const NAV = [
   { to: "/library", label: "Library", icon: LibI },
 ];
 const MORE = [
+  { to: "/asisten", label: "Asisten timing", short: "Asisten", icon: Bot },
   { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
   { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
   { to: "/settings", label: "Settings", icon: SetI },
@@ -75,6 +77,7 @@ function Main() {
     case "/hitung": page = <Calculator key={arg || "new"} {...props} promoId={arg} />; break;
     case "/rekomendasi": page = <Recommend {...props} />; break;
     case "/kalender": page = <CalendarPage {...props} />; break;
+    case "/asisten": page = <Assistant {...props} />; break;
     case "/library": page = <Library {...props} />; break;
     case "/promo": page = <PromoDetail key={arg} {...props} id={arg} />; break;
     case "/produk": page = <Products {...props} />; break;
@@ -120,6 +123,17 @@ function Main() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      <AnimatePresence>
+        {path !== "/asisten" && (
+          <motion.a href="#/asisten" aria-label="Buka asisten timing promo" title="Asisten timing promo"
+            initial={{ scale: 0, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
+            className="fixed z-40 right-4 bottom-20 md:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 flex items-center gap-2 pr-3">
+            <BotFace size={40} />
+            <span className="hidden md:inline text-[13px] font-extrabold text-bata">Kapan promo?</span>
+          </motion.a>
+        )}
+      </AnimatePresence>
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-paper border-t border-line safe-b">
         <div className="grid grid-cols-6">

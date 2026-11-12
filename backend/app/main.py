@@ -11,7 +11,7 @@ import re
 import os
 import secrets
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import engine as E
 from . import seed as S
+from . import timing as T
 
 log = logging.getLogger("crk-promo")
 logging.basicConfig(level=logging.INFO)
@@ -1163,6 +1164,137 @@ def calendar(start: str = "", end: str = "", user=Depends(current_user)):
     vis = [r for r in rows if r["periodEnd"] >= ds.isoformat() and r["periodStart"] <= de.isoformat()]
     return {"start": ds.isoformat(), "end": de.isoformat(), "promos": vis, "conflicts": conflicts,
             "moments": moments_between(ds, de, s)}
+
+
+def promo_rows():
+    profs = profiles_map()
+    rows = []
+    for p in db.promos.find({}):
+        try:
+            a, b = date.fromisoformat(p.get("periodStart")), date.fromisoformat(p.get("periodEnd"))
+        except Exception:
+            continue
+        st, _ = effective_status(p)
+        prof = profs.get(p.get("platformProfileId"), {})
+        rows.append({"id": p["id"], "nama": p.get("nama"), "effectiveStatus": st, "platformProfileId": p.get("platformProfileId"),
+                     "platformLabel": prof.get("label", "?"), "channelType": prof.get("channelType", "offline"),
+                     "areas": p.get("areas") or ["bandung"], "periodStart": min(a, b).isoformat(), "periodEnd": max(a, b).isoformat(),
+                     "products": sorted({i.get("productId") for i in p.get("items") or [] if i.get("productId")})})
+    return rows
+
+
+def timing_history():
+    profs = profiles_map()
+    out = []
+    for p in db.promos.find({"status": "done"}):
+        a = p.get("actual") or {}
+        if a.get("achievement") is None:
+            continue
+        try:
+            ds, de = date.fromisoformat(p["periodStart"]), date.fromisoformat(p["periodEnd"])
+        except Exception:
+            continue
+        pay = any((ds + timedelta(days=i)).day >= 25 or (ds + timedelta(days=i)).day <= 3 for i in range((de - ds).days + 1))
+        out.append({"channelType": profs.get(p.get("platformProfileId"), {}).get("channelType"), "achievement": a["achievement"],
+                    "hasPayday": pay})
+    return out
+
+
+def run_timing(ctx: dict):
+    profs = profiles_map()
+    prof = profs.get(ctx.get("platformProfileId"))
+    if not prof:
+        err(400, "Pilih platform/channel dulu.")
+    t0 = today()
+    req = {**ctx, "channelType": prof["channelType"]}
+    h_to = date.fromisoformat(ctx["to"]) if ctx.get("to") else t0 + timedelta(days=120)
+    mo = moments_between(t0, h_to + timedelta(days=70), get_settings())
+    res = T.recommend_timing(req, promo_rows(), mo, t0, timing_history())
+    res["platformLabel"] = prof["label"]
+    return res
+
+
+@app.post("/api/timing")
+def api_timing(body: dict, user=Depends(current_user)):
+    return run_timing(body)
+
+
+def ctx_from_promo(pid: str) -> dict:
+    p = db.promos.find_one({"id": pid})
+    if not p:
+        return {}
+    try:
+        dur = (date.fromisoformat(p["periodEnd"]) - date.fromisoformat(p["periodStart"])).days + 1
+    except Exception:
+        dur = None
+    return {"platformProfileId": p.get("platformProfileId"), "objective": p.get("objective"), "areas": p.get("areas"),
+            "products": sorted({i.get("productId") for i in p.get("items") or [] if i.get("productId")}),
+            "duration": dur, "excludeId": p["id"], "promoName": p.get("nama"),
+            "checkStart": p.get("periodStart"), "checkEnd": p.get("periodEnd")}
+
+
+@app.post("/api/bot")
+def api_bot(body: dict, user=Depends(current_user)):
+    P = products_map()
+    profs = profiles_map()
+    ctx = dict(body.get("context") or {})
+    if body.get("promoId"):
+        ctx.update({k: v for k, v in ctx_from_promo(body["promoId"]).items() if v})
+    if body.get("prefill"):
+        ctx.update({k: v for k, v in body["prefill"].items() if v not in (None, "", [])})
+    msg = body.get("message") or ""
+    if msg:
+        ctx = T.parse_message(msg, ctx, P, profs, today())
+    if body.get("set"):
+        for k, v in body["set"].items():
+            if v is None:
+                ctx.pop(k, None)
+            else:
+                ctx[k] = v
+    need = T.missing(ctx)
+    if need:
+        if "platform" in need:
+            return {"context": ctx, "reply": "Promo ini mau dijalankan di channel mana?",
+                    "chips": [{"label": p["label"], "set": {"platformProfileId": p["id"]}} for p in profs.values()
+                              if not p["label"].endswith("(lama)")]}
+        return {"context": ctx, "reply": "Tujuan utamanya apa? Ini menentukan apakah saya cari hari ramai atau hari sepi.",
+                "chips": [{"label": T.OBJ_LABEL[k].capitalize(), "set": {"objective": k}} for k in T.OBJ_LABEL]}
+    res = run_timing(ctx)
+    if res.get("error"):
+        return {"context": ctx, "reply": res["error"], "chips": []}
+    prod = ", ".join(P[x]["nama"] for x in (ctx.get("products") or [])[:3] if x in P)
+    who = f" untuk {prod}" if prod else ""
+    lines = []
+    if res.get("check"):
+        c = res["check"]
+        nm = f" untuk {ctx['promoName']}" if ctx.get("promoName") else ""
+        lines.append(f"Tanggal **{c['range']}**{nm} mendapat skor **{c['score']}/100** ({c['verdict']}).")
+        if c["reasons"]:
+            lines.append("Alasannya: " + "; ".join(c["reasons"]) + ".")
+        if c["cautions"]:
+            lines.append("Perhatian: " + "; ".join(c["cautions"]) + ".")
+        best = res["recommendations"][0] if res["recommendations"] else None
+        if best and c["gapToBest"] >= 10:
+            lines.append(f"Ada pilihan lebih baik: **{best['range']}** (skor {best['score']}).")
+    else:
+        best = res["recommendations"][0]
+        lines.append(f"Untuk {T.OBJ_LABEL.get(res['objective'], res['objective'])} di {res['platformLabel']}{who}, waktu terbaik "
+                     f"**{best['range']}** (mulai {best['startDay']}), skor **{best['score']}/100**.")
+        lines.append("Alasannya: " + "; ".join(best["reasons"]) + ".")
+        if best["cautions"]:
+            lines.append("Perhatian: " + "; ".join(best["cautions"]) + ".")
+        alts = res["recommendations"][1:]
+        if alts:
+            lines.append("Alternatif: " + ", ".join(f"{a['range']} (skor {a['score']})" for a in alts) + ".")
+        av = res["avoid"]
+        lines.append(f"Sebaiknya hindari {av['range']} (skor {av['score']}): {av['whyLow']}.")
+    lines.append(f"{res['method']} Skor 100 = pilihan terbaik dalam rentang yang dinilai. Durasi {res['duration']} hari; persiapan minimal H-{res['leadDays']}.")
+    if res.get("historyNote"):
+        lines.append(res["historyNote"])
+    chips = [{"label": "7 hari", "set": {"duration": 7}}, {"label": "14 hari", "set": {"duration": 14}},
+             {"label": "30 hari", "set": {"duration": 30}}, {"label": "Bulan depan", "message": "bulan depan"},
+             {"label": "Ganti objective", "set": {"objective": None}}, {"label": "Ganti channel", "set": {"platformProfileId": None}}]
+    return {"context": ctx, "reply": "\n\n".join(lines), "result": res, "chips": chips}
 
 
 @app.post("/api/moments")

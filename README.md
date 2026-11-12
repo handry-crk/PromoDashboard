@@ -68,3 +68,13 @@ pytest -q backend/tests                    # jalankan dari folder backend
 - Hitungan event: transaksi/hari = pengunjung × mampir × beli, dibatasi kapasitas booth. Output: break-even transaksi, event contribution, cost per transaksi, cost per CRM, stok yang dibawa (+20%), dan target per jam.
 - Event Scorecard 8 kriteria (≥ 3,8 lanjut, 3,0–3,8 negosiasi, < 3,0 tolak) masuk ke Gate. Event contribution negatif → HOLD, kecuali ada alasan strategis.
 - Database lama otomatis mendapat 4 profil event saat aplikasi start. Profil yang sudah ada tidak diubah.
+
+## Kalender promo
+Menu **Kalender**: tampilan Bulan dan Timeline per platform. Isinya momen otomatis (tanggal kembar, gajian 25–28, Harbolnas, hari besar; * = perkiraan) dan momen brand sendiri, plus peringatan bentrok, beda harga, dan padat. Klik tanggal untuk membuat promo mulai tanggal itu.
+
+## Asisten timing promo
+Menu **Asisten** atau tombol bot di pojok kanan bawah. Tanya dengan bahasa biasa ("kapan promo AOV mozza di GoFood 2 minggu bulan depan?", "cek 1–14 des") atau klik pilihan.
+- **Yang dinilai:** pola hari per channel (weekday vs weekend), gajian (25–3), tanggal tua (15–24), musim (Desember, libur sekolah, musim hujan untuk delivery), momen (tanggal kembar dan Harbolnas untuk marketplace, Ramadan, Idul Fitri), objective promo (trial/AOV cari hari ramai, isi jam sepi cari hari sepi), bentrok dan jeda ≥ 14 hari dari promo produk yang sama, maksimal 2 promo bersamaan per platform, persiapan minimal H-7 (event H-14), dan histori achievement promo yang sudah selesai.
+- **Skor 0–100 relatif** terhadap semua tanggal mulai dalam rentang yang dinilai. Hasilnya 1 waktu terbaik, 2 alternatif, 1 yang sebaiknya dihindari, dan heatmap skor per tanggal.
+- **Dari kalkulator:** tombol "Kapan sebaiknya?". Rekomendasi bisa langsung dipakai ke kalkulator atau dibuka di kalender.
+- **Indeks permintaan** adalah asumsi awal di `backend/app/timing.py`. Akan lebih tajam setelah hasil aktual promo diisi.

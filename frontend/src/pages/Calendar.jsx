@@ -27,7 +27,12 @@ const MOMENT = { libur: "#B42F27", belanja: "#2F6B4A", gajian: "#B8741A", musim:
 export default function Calendar({ st }) {
   const toast = useToast();
   const now = new Date();
-  const [month, setMonth] = useState(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [month, setMonth] = useState(() => {
+    const want = sessionStorage.getItem("crk_cal_month");
+    sessionStorage.removeItem("crk_cal_month");
+    if (want) { const [y, m] = want.split("-").map(Number); return new Date(y, m - 1, 1); }
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [dir, setDir] = useState(0);
   const [view, setView] = useState(window.innerWidth < 768 ? "bulan" : "bulan");
   const [ch, setCh] = useState("all");

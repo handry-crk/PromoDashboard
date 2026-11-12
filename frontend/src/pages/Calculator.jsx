@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Trash2, Save, Send, Copy, ChevronDown, Wand2, Info } from "lucide-react";
+import { Plus, Trash2, Save, Send, Copy, ChevronDown, Wand2, Info, Bot } from "lucide-react";
 import { api, rp, rpShort, pc, num, debounce, CH_LABEL, CH_ORDER } from "../lib";
 import { CimolBall, Badge, Waterfall, Quadrant, Loader, useToast, fireConfetti, MiniBall, CountUp } from "../ui";
 import { go } from "../App";
@@ -102,7 +102,9 @@ export default function Calculator({ st, reload, promoId }) {
         try {
           const p = await api(`/promos/${promoId}`);
           setSaved(p);
-          setPromo({ ...blankPromo(), ...p });
+          let patch = null;
+          try { patch = JSON.parse(sessionStorage.getItem("crk_date_patch") || "null"); sessionStorage.removeItem("crk_date_patch"); } catch { /* */ }
+          setPromo({ ...blankPromo(), ...p, ...(patch || {}), ...(patch ? { _fromCalendar: true } : {}) });
           setArea((p.areas || ["bandung"])[0]);
         } catch (e) { toast(e.message, "bad"); go("/library"); }
       } else {
@@ -309,6 +311,16 @@ export default function Calculator({ st, reload, promoId }) {
 
         <Section title={ch === "event" ? "Tanggal & biaya tetap event" : "Periode, outlet & kapasitas"} open={ch === "event" || !!promo._fromCalendar}>
           <div className="grid grid-cols-2 gap-3">
+            <button type="button" className="col-span-2 btn-soft !justify-start" onClick={() => {
+              sessionStorage.setItem("crk_bot_prefill", JSON.stringify({
+                platformProfileId: promo.platformProfileId, objective: promo.objective, areas: promo.areas,
+                products: [...new Set((promo.items || []).map((i) => i.productId))],
+                duration: Math.max(1, Math.round((new Date(promo.periodEnd) - new Date(promo.periodStart)) / 864e5) + 1),
+                checkStart: promo.periodStart, checkEnd: promo.periodEnd, promoName: promo.nama || undefined, excludeId: saved?.id,
+                _question: `Kapan sebaiknya ${promo.nama || "promo ini"} dijalankan?`,
+              }));
+              go("/asisten");
+            }}><Bot size={16} />Kapan sebaiknya? Tanya asisten timing</button>
             {multi && <p className="col-span-2 text-[12px] text-ink/55">Biaya tetap dibagi ke tiap area sesuai jumlah outlet.</p>}
             <div><label className="lbl">Mulai</label><input type="date" className="field" value={promo.periodStart || ""} onChange={(e) => up({ periodStart: e.target.value })} /></div>
             <div><label className="lbl">Selesai</label><input type="date" className="field" value={promo.periodEnd || ""} onChange={(e) => up({ periodEnd: e.target.value })} /></div>
