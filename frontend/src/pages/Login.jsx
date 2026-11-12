@@ -86,8 +86,17 @@ export default function Login({ onIn }) {
           </motion.div>
         ) : (
         <form onSubmit={submit} className="w-full max-w-sm mx-auto">
+          {(() => {
+            const tabs = [["login", "Login"], ...(canRegister ? [["register", "Daftar"]] : []), ...(info.adminPin ? [["admin", "PIN Admin"]] : [])];
+            if (tabs.length === 1) return (
+              <div className="mb-6">
+                <h2 className="text-[26px] leading-tight"><b className="font-extrabold">Masuk</b> ke dashboard</h2>
+                <p className="text-[14px] text-ink/60 mt-1">Pakai nama atau email kantor dan PIN Anda.</p>
+              </div>
+            );
+            return (
           <div className="flex gap-1 p-1 rounded-full bg-paper border border-line mb-6">
-            {[["login", "Login"], ...(canRegister ? [["register", "Daftar"]] : []), ...(info.adminPin ? [["admin", "PIN Admin"]] : [])].map(([k, l]) => (
+            {tabs.map(([k, l]) => (
               <button type="button" key={k} onClick={() => setMode(k)}
                 className={`relative flex-1 h-10 rounded-full text-[14px] font-semibold ${mode === k ? "text-cream" : "text-ink/70"}`}>
                 {mode === k && <motion.span layoutId="authtab" className="absolute inset-0 rounded-full bg-bata" />}
@@ -95,6 +104,8 @@ export default function Login({ onIn }) {
               </button>
             ))}
           </div>
+            );
+          })()}
           {!info.hasAny && mode === "register" && (
             <div className="card p-3 text-[13px] mb-4">Belum ada anggota. Orang pertama yang daftar otomatis menjadi <b>Admin (Marketing Manager)</b>.</div>
           )}
@@ -117,14 +128,15 @@ export default function Login({ onIn }) {
               <div><label className="lbl" htmlFor="w">WhatsApp</label><input id="w" inputMode="tel" placeholder="08…" className="field" value={f.phone} onChange={set("phone")} /></div>
               {info.hasAny && <p className="text-[12px] text-ink/60">Akun aktif setelah disetujui Marketing Manager.</p>}
             </>)}
-            {mode === "login" && <p className="text-[12px] text-ink/55">Belum punya akun? Minta link undangan ke Marketing Manager.</p>}
             <div>
               <label className="lbl" htmlFor="p">{mode === "admin" ? "PIN Admin" : "PIN (4–6 angka)"}</label>
               <input id="p" className="field tracking-[.4em] text-center text-[20px] font-bold" type="password" inputMode="numeric" maxLength={6}
+                autoComplete={mode === "register" ? "new-password" : "current-password"}
                 value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, "") })} required />
             </div>
             <button className="btn-primary w-full" disabled={busy}>
               {busy ? "Memeriksa…" : mode === "register" ? (info.hasAny ? "Kirim pendaftaran" : "Daftar & masuk") : "Masuk"}</button>
+            {mode === "login" && <p className="text-[13px] text-ink/55 text-center">Belum punya akun? Minta link undangan ke Marketing Manager.</p>}
           </div>
         </form>
         )}
