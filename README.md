@@ -30,8 +30,8 @@ pytest -q backend/tests                    # jalankan dari folder backend
    - `METRICS_API_KEY`
    - `PUBLIC_BASE_URL`
    - `TZ=Asia/Jakarta`
-3. Hostinger → hPanel → Domains → `crkgroup.app` → DNS Zone → tambah CNAME `promo` → alamat dari Railway (Settings → Networking → Custom Domain).
-4. Buka `https://promo.crkgroup.app/api/health`. Harus muncul `"db":"mongo"`.
+3. Hostinger → hPanel → Domains → `crkgroup.app` → DNS Zone → tambah CNAME `promodashboard` → alamat dari Railway (Settings → Networking → Custom Domain).
+4. Buka `https://promodashboard.crkgroup.app/api/health`. Harus muncul `"db":"mongo"`.
 5. Marketing Manager daftar pertama (otomatis jadi Admin) → klik **Import data CRK**.
 6. Finance cek **Produk & HPP**. PIC Delivery/Marketplace cocokkan **Platform & Biaya** dengan Merchant/Seller Center, lalu klik **Tandai divalidasi**.
 7. Settings → Copy link Reporting → bagikan ke Direksi.
