@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut } from "lucide-react";
+import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays } from "lucide-react";
 import { api, setToken, getToken } from "./lib";
 import { Loader, useToast, Sheet } from "./ui";
 import Login from "./pages/Login";
@@ -13,6 +13,7 @@ import Products from "./pages/Products";
 import Platforms from "./pages/Platforms";
 import Settings from "./pages/Settings";
 import Report from "./pages/Report";
+import CalendarPage from "./pages/Calendar";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -28,12 +29,13 @@ export const go = (p) => { window.location.hash = p; };
 const NAV = [
   { to: "/", label: "Beranda", icon: HomeI },
   { to: "/hitung", label: "Kalkulator", icon: CalcI },
+  { to: "/kalender", label: "Kalender", icon: CalendarDays },
   { to: "/rekomendasi", label: "Rekomendasi", icon: Sparkles },
   { to: "/library", label: "Library", icon: LibI },
 ];
 const MORE = [
-  { to: "/produk", label: "Produk & HPP", icon: Package },
-  { to: "/platform", label: "Platform & Biaya", icon: Store },
+  { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
+  { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
   { to: "/settings", label: "Settings", icon: SetI },
 ];
 
@@ -72,6 +74,7 @@ function Main() {
   switch (path) {
     case "/hitung": page = <Calculator key={arg || "new"} {...props} promoId={arg} />; break;
     case "/rekomendasi": page = <Recommend {...props} />; break;
+    case "/kalender": page = <CalendarPage {...props} />; break;
     case "/library": page = <Library {...props} />; break;
     case "/promo": page = <PromoDetail key={arg} {...props} id={arg} />; break;
     case "/produk": page = <Products {...props} />; break;
@@ -92,16 +95,16 @@ function Main() {
               <div className="text-[17px]"><b className="font-extrabold">Promo</b> Calculator</div>
             </div>
           </a>
-          <nav className="hidden md:flex ml-6 gap-1">
+          <nav className="hidden md:flex ml-4 gap-0.5">
             {[...NAV, ...MORE].map((n) => (
-              <a key={n.to} href={`#${n.to}`} className={`relative px-3 py-1.5 rounded-full text-[14px] font-semibold ${active(n.to) ? "text-bata" : "text-cream/85 hover:text-cream"}`}>
+              <a key={n.to} href={`#${n.to}`} className={`relative px-2.5 py-1.5 rounded-full text-[13.5px] font-semibold whitespace-nowrap ${active(n.to) ? "text-bata" : "text-cream/85 hover:text-cream"}`}>
                 {active(n.to) && <motion.span layoutId="navpill" className="absolute inset-0 rounded-full bg-cream" transition={{ type: "spring", stiffness: 400, damping: 30 }} />}
-                <span className="relative">{n.label}</span>
+                <span className="relative">{n.short || n.label}</span>
               </a>
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <div className="hidden sm:block text-right leading-tight">
+            <div className="hidden xl:block text-right leading-tight whitespace-nowrap">
               <div className="text-[13px] font-bold">{st.user.name}</div>
               <div className="text-[11px] opacity-80">{st.roles[st.user.role]}</div>
             </div>
@@ -119,17 +122,17 @@ function Main() {
       </main>
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-paper border-t border-line safe-b">
-        <div className="grid grid-cols-5">
+        <div className="grid grid-cols-6">
           {NAV.map((n) => {
             const I = n.icon; const on = active(n.to);
             return (
-              <a key={n.to} href={`#${n.to}`} className={`relative flex flex-col items-center justify-center gap-0.5 h-14 text-[11px] font-semibold ${on ? "text-bata" : "text-ink/60"}`}>
+              <a key={n.to} href={`#${n.to}`} className={`relative flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] font-semibold ${on ? "text-bata" : "text-ink/60"}`}>
                 {on && <motion.span layoutId="bnav" className="absolute top-0 h-[3px] w-10 rounded-full bg-bata" />}
-                <motion.span animate={on ? { y: [0, -4, 0] } : {}} transition={{ duration: 0.35 }}><I size={21} /></motion.span>{n.label}
+                <motion.span animate={on ? { y: [0, -4, 0] } : {}} transition={{ duration: 0.35 }}><I size={20} /></motion.span>{n.label === "Rekomendasi" ? "Saran" : n.label}
               </a>
             );
           })}
-          <button onClick={() => setMore(true)} className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[11px] font-semibold ${MORE.some((m) => active(m.to)) ? "text-bata" : "text-ink/60"}`}>
+          <button onClick={() => setMore(true)} className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] font-semibold ${MORE.some((m) => active(m.to)) ? "text-bata" : "text-ink/60"}`}>
             <MoreHorizontal size={21} />Lainnya
           </button>
         </div>

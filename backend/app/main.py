@@ -1040,6 +1040,154 @@ def reset_pin(mid: str, body: dict, user=Depends(require("head"))):
 
 
 # ---------------------------------------------------------------------------
+# calendar
+# ---------------------------------------------------------------------------
+# Hari besar 2026–2027. Tanggal Islam & Imlek adalah *perkiraan, cek SKB pemerintah.
+HOLIDAYS = [
+    ("2026-12-12", None, "Harbolnas 12.12", "belanja"), ("2026-12-24", "2026-12-26", "Natal", "libur"),
+    ("2026-12-31", "2027-01-01", "Tahun Baru", "libur"), ("2027-02-06", None, "Imlek*", "libur"),
+    ("2027-02-08", "2027-03-09", "Ramadan*", "musim"), ("2027-02-14", None, "Valentine", "momen"),
+    ("2027-03-10", "2027-03-11", "Idul Fitri*", "libur"), ("2027-03-09", None, "Nyepi*", "libur"),
+    ("2027-03-26", None, "Jumat Agung*", "libur"), ("2027-05-01", None, "Hari Buruh", "libur"),
+    ("2027-05-06", None, "Kenaikan Isa Almasih*", "libur"), ("2027-05-17", None, "Idul Adha*", "libur"),
+    ("2027-05-20", None, "Waisak*", "libur"), ("2027-06-01", None, "Hari Lahir Pancasila", "libur"),
+    ("2027-06-07", None, "Tahun Baru Islam*", "libur"), ("2027-08-17", None, "HUT RI", "libur"),
+    ("2027-08-16", None, "Maulid Nabi*", "libur"), ("2027-12-12", None, "Harbolnas 12.12", "belanja"),
+    ("2027-12-25", None, "Natal", "libur"),
+]
+
+
+def moments_between(start: date, end: date, settings: dict):
+    out = []
+    d = date(start.year, start.month, 1)
+    while d <= end:
+        y, m = d.year, d.month
+        twin = date(y, m, m) if m <= 28 or m in (1, 3, 5, 7, 8, 10, 12) or m <= 30 else None
+        if twin and start <= twin <= end and m >= 1:
+            out.append({"date": twin.isoformat(), "end": None, "label": f"Tanggal kembar {m}.{m}", "type": "belanja"})
+        g1 = date(y, m, 25)
+        g2 = date(y, m, 28)
+        if g2 >= start and g1 <= end:
+            out.append({"date": g1.isoformat(), "end": g2.isoformat(), "label": "Gajian", "type": "gajian"})
+        d = date(y + (m == 12), m % 12 + 1, 1)
+    for a, b, label, typ in HOLIDAYS:
+        da, db_ = date.fromisoformat(a), date.fromisoformat(b or a)
+        if db_ >= start and da <= end:
+            out.append({"date": a, "end": b, "label": label, "type": typ})
+    for mo in settings.get("moments") or []:
+        try:
+            da, db_ = date.fromisoformat(mo["date"]), date.fromisoformat(mo.get("end") or mo["date"])
+        except Exception:
+            continue
+        if db_ >= start and da <= end:
+            out.append({"date": mo["date"], "end": mo.get("end"), "label": mo.get("label", "Momen"), "type": mo.get("type", "momen"),
+                        "custom": True, "id": mo.get("id")})
+    seen, uniq = set(), []
+    for x in sorted(out, key=lambda x: x["date"]):
+        k = (x["date"], x["label"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(x)
+    return uniq
+
+
+@app.get("/api/calendar")
+def calendar(start: str = "", end: str = "", user=Depends(current_user)):
+    try:
+        ds = date.fromisoformat(start) if start else date(today().year, today().month, 1)
+        de = date.fromisoformat(end) if end else ds.replace(day=28)
+    except ValueError:
+        err(400, "Format tanggal harus YYYY-MM-DD.")
+    if (de - ds).days > 400:
+        err(400, "Rentang kalender maksimal 400 hari.")
+    s = get_settings()
+    P = products_map()
+    profs = profiles_map()
+    rows = []
+    for p in db.promos.find({}):
+        try:
+            a, b = date.fromisoformat(p.get("periodStart")), date.fromisoformat(p.get("periodEnd"))
+        except Exception:
+            continue
+        if b < a:
+            a, b = b, a
+        st, waiting = effective_status(p)
+        sm = next(iter((p.get("summary") or {}).values()), {})
+        prof = profs.get(p.get("platformProfileId"), {})
+        rows.append({"id": p["id"], "kode": p.get("kode"), "nama": p.get("nama"), "status": p.get("status"), "effectiveStatus": st,
+                     "waitingActual": waiting, "platformProfileId": p.get("platformProfileId"), "platformLabel": prof.get("label", "?"),
+                     "channelType": prof.get("channelType", "offline"), "areas": p.get("areas") or ["bandung"],
+                     "periodStart": a.isoformat(), "periodEnd": b.isoformat(), "mechanism": E.MECHANISMS.get(p.get("mechanism"), ""),
+                     "products": sorted({i.get("productId") for i in p.get("items") or [] if i.get("productId")}),
+                     "productNames": [P.get(i.get("productId"), {}).get("nama", "?") for i in p.get("items") or []],
+                     "quadrant": sm.get("quadrant"), "gate": sm.get("gate"), "health": (sm.get("health") or {}).get("label"),
+                     "_a": a, "_b": b})
+    active = [r for r in rows if r["effectiveStatus"] != "rejected"]
+    conflicts = []
+    for i in range(len(active)):
+        for j in range(i + 1, len(active)):
+            x, y = active[i], active[j]
+            lo, hi = max(x["_a"], y["_a"]), min(x["_b"], y["_b"])
+            if lo > hi or hi < ds or lo > de:
+                continue
+            areas = set(x["areas"]) & set(y["areas"])
+            prods = set(x["products"]) & set(y["products"])
+            if not areas or not prods:
+                continue
+            names = ", ".join(sorted({P.get(pid, {}).get("nama", pid) for pid in prods}))
+            if x["platformProfileId"] == y["platformProfileId"]:
+                typ, msg = "bentrok", f"{names} dipromokan dua kali di {x['platformLabel']} pada tanggal yang sama"
+            elif x["channelType"] == y["channelType"] != "event":
+                typ, msg = "harga", f"{names} punya harga promo berbeda di {x['platformLabel']} dan {y['platformLabel']}"
+            else:
+                continue
+            conflicts.append({"type": typ, "a": x["id"], "b": y["id"], "aName": x["nama"], "bName": y["nama"],
+                              "from": lo.isoformat(), "to": hi.isoformat(), "areas": sorted(areas), "message": msg})
+    # too many concurrent promos on one platform
+    by_plat = {}
+    for r in active:
+        by_plat.setdefault(r["platformProfileId"], []).append(r)
+    d = ds
+    flagged = set()
+    while d <= de:
+        for pid, lst in by_plat.items():
+            live = [r for r in lst if r["_a"] <= d <= r["_b"]]
+            if len(live) >= 3 and pid not in flagged:
+                flagged.add(pid)
+                conflicts.append({"type": "padat", "a": live[0]["id"], "b": live[1]["id"], "aName": live[0]["nama"], "bName": live[1]["nama"],
+                                  "from": d.isoformat(), "to": d.isoformat(), "areas": [],
+                                  "message": f"{len(live)} promo berjalan bersamaan di {live[0]['platformLabel']} — crew dan customer bisa bingung"})
+        d = d.fromordinal(d.toordinal() + 1)
+    for r in rows:
+        r.pop("_a"), r.pop("_b")
+    vis = [r for r in rows if r["periodEnd"] >= ds.isoformat() and r["periodStart"] <= de.isoformat()]
+    return {"start": ds.isoformat(), "end": de.isoformat(), "promos": vis, "conflicts": conflicts,
+            "moments": moments_between(ds, de, s)}
+
+
+@app.post("/api/moments")
+def add_moment(body: dict, user=Depends(require("head", "planner", "finance"))):
+    try:
+        date.fromisoformat(body.get("date") or "")
+        if body.get("end"):
+            date.fromisoformat(body["end"])
+    except ValueError:
+        err(400, "Isi tanggal momen dengan benar.")
+    if not (body.get("label") or "").strip():
+        err(400, "Isi nama momen.")
+    mo = {"id": secrets.token_hex(4), "date": body["date"], "end": body.get("end") or None, "label": body["label"].strip()[:60],
+          "type": body.get("type") or "momen", "by": user["name"]}
+    db.settings.update_one({"_id": "main"}, {"$push": {"moments": mo}})
+    return mo
+
+
+@app.delete("/api/moments/{mid}")
+def del_moment(mid: str, user=Depends(require("head", "planner", "finance"))):
+    db.settings.update_one({"_id": "main"}, {"$pull": {"moments": {"id": mid}}})
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # seed, report, export, metrics
 # ---------------------------------------------------------------------------
 

@@ -113,3 +113,25 @@ def test_status_rules_and_multi_area():
     assert md["targets"]["targetUnits"] == sum(o["scenarios"]["target"]["totalUnits"] for o in md["results"].values())
     assert c.post("/api/calc", headers=H(ha), json={"promo": {"mechanism": "diskon_persen", "platformProfileId": "offline_kios",
                   "items": [{"productId": "ayam-b"}], "params": {"discountPct": "x"}}}).status_code == 400
+
+
+def test_calendar_conflicts_and_moments():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    base = {"mechanism": "diskon_persen", "objective": "trial", "areas": ["bandung"], "params": {"discountPct": 10}}
+    c.post("/api/promos", headers=H(ha), json={**base, "nama": "A", "platformProfileId": "offline_gerobak", "periodStart": "2026-12-01",
+                                               "periodEnd": "2026-12-15", "items": [{"productId": "mozza-b"}]})
+    c.post("/api/promos", headers=H(ha), json={**base, "nama": "B", "platformProfileId": "gofood", "periodStart": "2026-12-10",
+                                               "periodEnd": "2026-12-20", "items": [{"productId": "mozza-b"}]})
+    r = c.get("/api/calendar?start=2026-11-30&end=2027-01-10", headers=H(ha)).json()
+    types = {x["type"] for x in r["conflicts"]}
+    assert "bentrok" in types  # A vs Mozza Duo (same product, same gerobak, same area)
+    labels = {m["label"] for m in r["moments"]}
+    assert {"Harbolnas 12.12", "Natal", "Gajian", "Tanggal kembar 1.1"} <= labels
+    mo = c.post("/api/moments", headers=H(ha), json={"date": "2026-12-20", "label": "Anniversary CBAA"}).json()
+    r = c.get("/api/calendar?start=2026-12-01&end=2026-12-31", headers=H(ha)).json()
+    assert any(m.get("custom") and m["label"] == "Anniversary CBAA" for m in r["moments"])
+    c.delete(f"/api/moments/{mo['id']}", headers=H(ha))
+    assert c.get("/api/calendar?start=2026-12-01&end=2028-12-31", headers=H(ha)).status_code == 400

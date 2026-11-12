@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Calculator, Sparkles, Database } from "lucide-react";
+import { Calculator, Sparkles, Database, CalendarDays } from "lucide-react";
 import { api, rpShort, STATUS, fmtDate } from "../lib";
 import { Title, Stat, Quadrant, MiniBall, Badge, Empty, useToast, fireConfetti } from "../ui";
 
@@ -54,9 +54,10 @@ export default function Home({ st, reload }) {
             <div className="text-[14px] font-semibold text-ink/60">Halo {st.user.name},</div>
             <p className="text-[20px] md:text-[24px] font-bold leading-snug mt-1">{takeaway}</p>
           </div>
-          <div className="flex gap-2 mt-4 md:mt-0 shrink-0">
+          <div className="flex flex-wrap gap-2 mt-4 md:mt-0 shrink-0">
             <a href="#/hitung" className="btn-primary"><Calculator size={18} />Hitung promo</a>
             <a href="#/rekomendasi" className="btn-ghost"><Sparkles size={18} />Cari rekomendasi</a>
+            <a href="#/kalender" className="btn-soft"><CalendarDays size={18} />Kalender</a>
           </div>
         </div>
       </motion.section>
