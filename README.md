@@ -83,3 +83,9 @@ Menu **Asisten** atau tombol bot di pojok kanan bawah. Tanya dengan bahasa biasa
 `duration_advice` di `backend/app/timing.py` memberi durasi saran dan rentang wajar. Tampil di kalkulator (kartu "Durasi promo" dengan tombol pakai saran), kartu rekomendasi promo, dan jawaban bot.
 - Dasar: tujuan promo, mekanisme (flash sale 1–3 hari, beli-gratis 3–7, bundle/tebus murah 14–30, happy hour 14–28, stamp card ≥ 30), channel (marketplace 1–7 hari, event mengikuti hari event), kedalaman diskon (≥ 30% maks. 7 hari, ≥ 20% maks. 14 hari), skor Sehat, batas investasi strategis, dan histori promo sejenis yang capai target.
 - Angka rentang adalah aturan awal; ubah di `DUR_OBJECTIVE` dan `DUR_MECH`.
+
+## Data belajar (hasil promo nyata)
+Menu **Data belajar**: masukkan hasil promo yang pernah dijalankan lewat form atau import CSV (template tersedia; pemisah `;` atau `,`). Promo yang ditutup di dashboard dengan hasil aktual ikut masuk otomatis.
+- Ukuran hasil: pencapaian vs target (%), atau penilaian 1–5 (Gagal … Sangat berhasil), atau kenaikan revenue (%). Opsional: take rate, diskon, catatan.
+- Dipakai oleh: bot timing (pengaruh gajian, momen/hari besar, dan bulan per jenis channel; aktif setelah ≥ 3 hasil per jenis channel; bot juga mengutip promo serupa), rekomendasi promo (pengali performa per jenis promo × platform dan kalibrasi skor Menarik dari take rate, ≥ 3 hasil), dan saran durasi (rata-rata durasi promo sejenis yang capai target, ≥ 3 hasil).
+- Settings → **Unduh backup**: semua data dalam satu file JSON (tanpa PIN).

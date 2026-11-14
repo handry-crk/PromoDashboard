@@ -112,6 +112,20 @@ export default function Settings({ st, reload }) {
       </section>
 
       <section className="card p-4">
+        <div className="font-extrabold mb-1">Backup data</div>
+        <p className="text-[13px] text-ink/60 mb-2">Unduh semua data (produk, biaya platform, promo, data belajar, anggota tanpa PIN) sebagai satu file. Lakukan seminggu sekali, karena backup otomatis belum ada.</p>
+        <button className="btn-soft" onClick={async () => {
+          try {
+            const d = await api("/backup");
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 1)], { type: "application/json" }));
+            a.download = `crk-promo-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+            toast("Backup diunduh");
+          } catch (e) { toast(e.message, "bad"); }
+        }}>Unduh backup</button>
+      </section>
+
+      <section className="card p-4">
         <div className="font-extrabold mb-3">Ambang skor</div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           {n("safeDiscountGm", "GM aman diskon ≥", { suffix: "%" })}

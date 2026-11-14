@@ -41,7 +41,52 @@ def moment_on(d: date, moments: list[dict]):
     return [m for m in moments if m["date"] <= iso <= (m.get("end") or m["date"])]
 
 
-def demand(d: date, ch: str, moments: list[dict], pay_tilt: float = 1.0):
+PERF_RATING = {1: 0.5, 2: 0.75, 3: 1.0, 4: 1.15, 5: 1.3}
+RATING_LABEL = {1: "Gagal", 2: "Kurang", 3: "Sesuai target", 4: "Berhasil", 5: "Sangat berhasil"}
+
+
+def window_features(ds: date, de: date, moments: list[dict]) -> dict:
+    n = (de - ds).days + 1
+    days = [ds + timedelta(days=i) for i in range(max(n, 1))]
+    return {"days": n, "hasPayday": any(d.day >= 25 or d.day <= 3 for d in days),
+            "hasMoment": any(any("Gajian" not in m["label"] for m in moment_on(d, moments)) for d in days),
+            "month": days[len(days) // 2].month}
+
+
+def learn(history: list[dict], ch: str) -> dict:
+    """Turn real promo results into adjustments. Needs >= 3 results on the same channel type."""
+    hs = [h for h in history or [] if h.get("channelType") == ch and h.get("perf") is not None]
+    out = {"n": len(hs), "payTilt": 1.0, "momentTilt": 1.0, "month": {}, "notes": []}
+    if len(hs) < 3:
+        return out
+    avg = lambda xs: sum(xs) / len(xs)
+
+    def tilt(key, label):
+        a = [h["perf"] for h in hs if h.get(key)]
+        b = [h["perf"] for h in hs if not h.get(key)]
+        if not a or not b or not avg(b):
+            return 1.0
+        out["notes"].append(f"promo yang mencakup {label} mencapai {avg(a)*100:.0f}% target, tanpa {label} {avg(b)*100:.0f}%")
+        return max(0.5, min(2.0, avg(a) / avg(b)))
+
+    out["payTilt"] = tilt("hasPayday", "gajian")
+    out["momentTilt"] = tilt("hasMoment", "momen/hari besar")
+    overall = avg([h["perf"] for h in hs])
+    by_m = {}
+    for h in hs:
+        by_m.setdefault(h.get("month"), []).append(h["perf"])
+    for m, xs in by_m.items():
+        if m and len(xs) >= 2 and overall:
+            f = max(0.85, min(1.15, avg(xs) / overall))
+            if abs(f - 1) < 0.08:
+                continue  # beda kecil dianggap noise
+            out["month"][m] = f
+            if True:
+                out["notes"].append(f"{BULAN[m - 1]} {'lebih kuat' if f > 1 else 'lebih lemah'} dari rata-rata ({avg(xs)*100:.0f}% target)")
+    return out
+
+
+def demand(d: date, ch: str, moments: list[dict], pay_tilt: float = 1.0, lrn: dict | None = None):
     """Relative demand for one day (1.0 = normal) plus the tags that explain it."""
     tags = []
     v = DOW.get(ch, DOW["offline"])[d.weekday()]
@@ -54,6 +99,8 @@ def demand(d: date, ch: str, moments: list[dict], pay_tilt: float = 1.0):
     elif 15 <= d.day <= 24:
         v *= 0.93
         tags.append("tanggal tua")
+    mt = (lrn or {}).get("momentTilt", 1.0)
+    v *= ((lrn or {}).get("month") or {}).get(d.month, 1.0)
     m = d.month
     if m == 12:
         v *= 1.12
@@ -74,15 +121,18 @@ def demand(d: date, ch: str, moments: list[dict], pay_tilt: float = 1.0):
         if "Gajian" in lab:
             continue
         if "kembar" in lab.lower() or "Harbolnas" in lab:
-            v *= {"marketplace": 2.0 if "Harbolnas" in lab else 1.7, "online_food": 1.10}.get(ch, 1.03)
+            f = {"marketplace": 2.0 if "Harbolnas" in lab else 1.7, "online_food": 1.10}.get(ch, 1.03)
         elif "Idul Fitri" in lab:
-            v *= {"offline": 0.6, "online_food": 0.7, "event": 0.5}.get(ch, 0.85)
+            f = {"offline": 0.6, "online_food": 0.7, "event": 0.5}.get(ch, 0.85)
         elif "Ramadan" in lab:
-            v *= {"offline": 1.10, "online_food": 1.15, "event": 0.8}.get(ch, 1.0)
+            f = {"offline": 1.10, "online_food": 1.15, "event": 0.8}.get(ch, 1.0)
         elif typ == "libur":
-            v *= {"offline": 1.12, "event": 1.25, "online_food": 1.05}.get(ch, 1.0)
+            f = {"offline": 1.12, "event": 1.25, "online_food": 1.05}.get(ch, 1.0)
         elif typ in ("momen", "belanja", "musim"):
-            v *= 1.10
+            f = 1.10
+        else:
+            f = 1.0
+        v *= max(0.3, 1 + (f - 1) * mt)
         tags.append(lab)
     return v, tags
 
@@ -112,23 +162,17 @@ def recommend_timing(req: dict, promos: list[dict], moments: list[dict], today: 
     earliest = max(today + timedelta(days=lead), h_start)
     if earliest > h_end:
         earliest = h_end
-    # history tilt for payday
-    pay_tilt, hist_note = 1.0, None
-    hs = [h for h in (history or []) if h.get("channelType") == ch and h.get("achievement") is not None]
-    if len(hs) >= 3:
-        with_pay = [h["achievement"] for h in hs if h.get("hasPayday")]
-        without = [h["achievement"] for h in hs if not h.get("hasPayday")]
-        if with_pay and without:
-            a, b = sum(with_pay) / len(with_pay), sum(without) / len(without)
-            pay_tilt = max(0.5, min(2.0, a / b if b else 1))
-            hist_note = f"Histori {len(hs)} promo {ch.replace('_', ' ')}: yang mencakup gajian mencapai {a*100:.0f}% target vs {b*100:.0f}% tanpa gajian."
+    # learn from real results (payday, moments, month)
+    L = learn(history or [], ch)
+    pay_tilt = L["payTilt"]
+    hist_note = (f"Belajar dari {L['n']} hasil promo {ch.replace('_', ' ')}: " + "; ".join(L["notes"]) + ".") if L["notes"] else None
 
     # demand cache
     cache = {}
 
     def day(d):
         if d not in cache:
-            cache[d] = demand(d, ch, moments, pay_tilt)
+            cache[d] = demand(d, ch, moments, pay_tilt, L)
         return cache[d]
 
     others = [p for p in promos if p.get("effectiveStatus") not in ("rejected", "done") and p.get("id") != req.get("excludeId")]
@@ -273,7 +317,8 @@ def recommend_timing(req: dict, promos: list[dict], moments: list[dict], today: 
     }.get(objective, "Untuk objective ini, saya cari periode dengan traffic dan daya beli tertinggi (weekend, gajian, momen).")
     return {"objective": objective, "duration": duration, "leadDays": lead, "channelType": ch,
             "horizon": {"from": earliest.isoformat(), "to": h_end.isoformat()}, "recommendations": recs, "check": check,
-            "avoid": pack(worst, "Sebaiknya dihindari"), "heat": heat, "method": ex, "historyNote": hist_note}
+            "avoid": pack(worst, "Sebaiknya dihindari"), "heat": heat, "method": ex, "historyNote": hist_note,
+            "learning": {"n": L["n"], "active": L["n"] >= 3, "notes": L["notes"]}}
 
 
 # ---------------------------------------------------------------------------

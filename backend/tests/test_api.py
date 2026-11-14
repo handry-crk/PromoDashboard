@@ -204,3 +204,38 @@ def test_viewer_never_gets_hpp():
     assert r.status_code == 200 and '"hpp"' not in _j.dumps(r.json())
     # manager still sees everything
     assert '"hpp"' in _j.dumps(c.get("/api/promos/PR-2611-01", headers=H(ha)).json())
+
+
+def test_learning_data_feeds_bot():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    base = {"platformProfileId": "gofood", "mechanism": "diskon_persen", "objective": "online", "areas": ["jakarta"]}
+    assert c.post("/api/learnings", headers=H(ha), json={**base, "nama": "X", "periodStart": "2026-08-01", "periodEnd": "2026-08-07"}).status_code == 400  # no result
+    assert c.post("/api/learnings", headers=H(ha), json={**base, "nama": "X", "periodStart": "2027-08-01", "periodEnd": "2027-08-07", "rating": 4}).status_code == 400  # future
+    before = c.post("/api/bot", headers=H(ha), json={"context": {"platformProfileId": "gofood", "objective": "online", "mechanism": "diskon_persen"}}).json()
+    assert "asumsi awal" in before["reply"] and not before["result"]["learning"]["active"]
+    rows = [("Gajian Agu", "2026-08-25", "2026-08-31", 5, 18), ("Gajian Sep", "2026-09-25", "2026-10-01", 4, 15),
+            ("Tengah Agu", "2026-08-10", "2026-08-16", 2, 6), ("Tengah Sep", "2026-09-10", "2026-09-16", 2, 5)]
+    for nama, a, b, rating, tr in rows:
+        r = c.post("/api/learnings", headers=H(ha), json={**base, "nama": nama, "periodStart": a, "periodEnd": b, "rating": rating, "takeRate": tr})
+        assert r.status_code == 200
+    data = c.get("/api/learnings", headers=H(ha)).json()
+    assert data["insights"]["total"] == 4 and data["insights"]["byChannel"]["online_food"]["active"]
+    assert any("gajian" in n for n in data["insights"]["byChannel"]["online_food"]["notes"])
+    after = c.post("/api/bot", headers=H(ha), json={"context": {"platformProfileId": "gofood", "objective": "online", "mechanism": "diskon_persen"}}).json()
+    assert after["result"]["learning"]["active"] and "Belajar dari 4 hasil" in after["reply"] and "Promo serupa sebelumnya" in after["reply"]
+    assert "asumsi awal" not in after["reply"]
+    best = after["result"]["recommendations"][0]
+    assert any("gajian" in x.lower() for x in best["reasons"])
+    # CSV import with ; delimiter and label names
+    csv_text = ("nama;platform;jenis_promo;tujuan;area;mulai;selesai;hasil_1_5;take_rate_pct;kenaikan_revenue_pct;pencapaian_target_pct;diskon_pct;catatan\n"
+                "Bundle Juli;gerobak;Bundle / paket;aov;bandung;2026-07-01;2026-07-21;;9;;110;10;ok\n"
+                "Rusak;;bundle;aov;bandung;2026-07-01;2026-07-21;3;;;;;\n")
+    r = c.post("/api/learnings/import", headers=H(ha), content=csv_text).json()
+    assert r["imported"] == 1 and len(r["errors"]) == 1
+    rec = next(x for x in c.get("/api/learnings", headers=H(ha)).json()["records"] if x["nama"] == "Bundle Juli")
+    assert rec["platformProfileId"] == "offline_gerobak" and rec["mechanism"] == "bundle" and abs(rec["perf"] - 1.1) < 1e-9 and rec["days"] == 21
+    assert c.delete(f"/api/learnings/{rec['id']}", headers=H(ha)).status_code == 200
+    assert c.get("/api/backup", headers=H(ha)).status_code == 200 and "pinHash" not in c.get("/api/backup", headers=H(ha)).text

@@ -265,14 +265,50 @@ def baseline_for(settings, pid, area):
     return ((settings.get("baselines") or {}).get(pid) or {}).get(area) or {}
 
 
-def history_list():
+def perf_of(achievement, rating, uplift):
+    if achievement is not None:
+        return float(achievement)
+    if rating:
+        return T.PERF_RATING.get(int(rating))
+    if uplift is not None:
+        return max(0.4, min(1.4, 1 + (float(uplift) - 10) / 50))  # +10% uplift dianggap sesuai target
+    return None
+
+
+def learning_records():
+    """Real promo results: promos closed in the dashboard + results entered by hand."""
+    profs = profiles_map()
+    st = get_settings()
     out = []
+
+    def add(src, rid, d, ach, rating, uplift, take, note):
+        try:
+            ds, de = date.fromisoformat(d["periodStart"]), date.fromisoformat(d["periodEnd"])
+        except Exception:
+            return
+        if de < ds:
+            return
+        prof = profs.get(d.get("platformProfileId"), {})
+        feat = T.window_features(ds, de, moments_between(ds, de, st))
+        out.append({"id": rid, "source": src, "nama": d.get("nama"), "platformProfileId": d.get("platformProfileId"),
+                    "platformId": d.get("platformProfileId"), "platformLabel": prof.get("label", "?"),
+                    "channelType": prof.get("channelType"), "mechanism": d.get("mechanism"), "objective": d.get("objective"),
+                    "areas": d.get("areas") or [], "periodStart": ds.isoformat(), "periodEnd": de.isoformat(),
+                    "takeRate": take, "upliftPct": uplift, "achievement": ach, "rating": rating, "perf": perf_of(ach, rating, uplift),
+                    "note": note, "by": d.get("by") or d.get("createdBy"), **feat})
+
     for p in db.promos.find({"status": "done"}):
         a = p.get("actual") or {}
-        if a.get("takeRate") is not None or a.get("achievement") is not None:
-            out.append({"mechanism": p.get("mechanism"), "platformId": p.get("platformProfileId"),
-                        "takeRate": a.get("takeRate"), "achievement": a.get("achievement")})
+        add("promo", p["id"], p, a.get("achievement"), None, None, a.get("takeRate"), a.get("learningHeadline") or a.get("learning"))
+    for r in db.learnings.find({}):
+        add("manual", r["id"], r, r.get("achievement"), r.get("rating"), r.get("upliftPct"), r.get("takeRate"), r.get("note"))
+    out.sort(key=lambda x: x["periodStart"], reverse=True)
     return out
+
+
+def history_list():
+    return [{"mechanism": r["mechanism"], "platformId": r["platformId"], "takeRate": r["takeRate"], "achievement": r["perf"]}
+            for r in learning_records() if r["takeRate"] is not None or r["perf"] is not None]
 
 
 def effective_status(p):
@@ -1282,32 +1318,11 @@ def promo_rows():
 
 
 def timing_history():
-    profs = profiles_map()
-    out = []
-    for p in db.promos.find({"status": "done"}):
-        a = p.get("actual") or {}
-        if a.get("achievement") is None:
-            continue
-        try:
-            ds, de = date.fromisoformat(p["periodStart"]), date.fromisoformat(p["periodEnd"])
-        except Exception:
-            continue
-        pay = any((ds + timedelta(days=i)).day >= 25 or (ds + timedelta(days=i)).day <= 3 for i in range((de - ds).days + 1))
-        out.append({"channelType": profs.get(p.get("platformProfileId"), {}).get("channelType"), "achievement": a["achievement"],
-                    "hasPayday": pay})
-    return out
+    return learning_records()
 
 
 def duration_history(mechanism: str):
-    out = []
-    for p in db.promos.find({"status": "done", "mechanism": mechanism}):
-        a = (p.get("actual") or {}).get("achievement")
-        try:
-            n = (date.fromisoformat(p["periodEnd"]) - date.fromisoformat(p["periodStart"])).days + 1
-        except Exception:
-            continue
-        out.append((n, a))
-    return out
+    return [(r["days"], r["perf"]) for r in learning_records() if r["mechanism"] == mechanism]
 
 
 def advice_for(promo: dict, o: dict, ch: str) -> dict:
@@ -1493,12 +1508,174 @@ def api_bot(body: dict, user=Depends(current_user)):
     lines.append(f"{res['method']} Skor 100 = pilihan terbaik dalam rentang yang dinilai. Persiapan minimal H-{res['leadDays']}.")
     if res.get("historyNote"):
         lines.append(res["historyNote"])
+    recs_l = learning_records()
+    sim = [r for r in recs_l if r["platformProfileId"] == ctx["platformProfileId"]
+           and (r["mechanism"] == ctx.get("mechanism") if ctx.get("mechanism") else r["objective"] == ctx.get("objective"))][:2]
+    if sim:
+        def how(r):
+            if r["achievement"] is not None:
+                return f"{r['achievement']*100:.0f}% target"
+            return T.RATING_LABEL.get(r["rating"] or 0, "hasil tercatat").lower()
+        lines.append("Promo serupa sebelumnya: " + "; ".join(
+            f"{r['nama']} ({T.fmt_range(date.fromisoformat(r['periodStart']), date.fromisoformat(r['periodEnd']))}, {r['days']} hari) → {how(r)}"
+            + (f", take rate {r['takeRate']:g}%" if r["takeRate"] is not None else "") for r in sim) + ".")
+    ln = res.get("learning") or {}
+    if not ln.get("active"):
+        lines.append(f"Catatan: baru ada {ln.get('n', 0)} hasil promo untuk channel ini, jadi saya masih memakai asumsi awal. "
+                     "Tambahkan hasil promo lama di menu Data belajar (minimal 3) supaya saran mengikuti data CRK.")
     chips = ([] if ctx.get("durationAuto") or adv["status"] == "pas" else
              [{"label": f"Pakai saran {adv['rec']} hari", "set": {"duration": adv["rec"]}}]) + [
              {"label": "7 hari", "set": {"duration": 7}}, {"label": "14 hari", "set": {"duration": 14}},
              {"label": "30 hari", "set": {"duration": 30}}, {"label": "Bulan depan", "message": "bulan depan"},
              {"label": "Ganti objective", "set": {"objective": None}}, {"label": "Ganti channel", "set": {"platformProfileId": None}}]
     return {"context": ctx, "reply": "\n\n".join(lines), "result": res, "chips": chips}
+
+
+LEARN_FIELDS = ("nama", "platformProfileId", "mechanism", "objective", "areas", "periodStart", "periodEnd", "rating", "takeRate",
+                "upliftPct", "achievement", "note", "discountPct")
+
+
+def clean_learning(body: dict, profs: dict) -> dict:
+    d = {k: body.get(k) for k in LEARN_FIELDS}
+    if not (d["nama"] or "").strip():
+        raise ValueError("Isi nama promo.")
+    if d["platformProfileId"] not in profs:
+        raise ValueError("Pilih channel/platform yang tersedia.")
+    if d["mechanism"] not in E.MECHANISMS:
+        raise ValueError("Pilih jenis promo.")
+    if d["objective"] not in E.OBJECTIVES:
+        d["objective"] = None
+    try:
+        ds, de = date.fromisoformat(str(d["periodStart"])), date.fromisoformat(str(d["periodEnd"]))
+    except ValueError:
+        raise ValueError("Isi tanggal mulai dan selesai (YYYY-MM-DD).")
+    if de < ds:
+        raise ValueError("Tanggal selesai harus setelah tanggal mulai.")
+    if ds > today():
+        raise ValueError("Data belajar hanya untuk promo yang sudah berjalan.")
+    def num(k, lo, hi):
+        v = d.get(k)
+        if v in (None, ""):
+            return None
+        v = float(str(v).replace(",", "."))
+        if not lo <= v <= hi:
+            raise ValueError(f"Nilai {k} di luar batas.")
+        return v
+    try:
+        d["rating"] = int(num("rating", 1, 5)) if d.get("rating") not in (None, "") else None
+        d["takeRate"] = num("takeRate", 0, 100)
+        d["upliftPct"] = num("upliftPct", -100, 1000)
+        ach = num("achievement", 0, 1000)
+        d["achievement"] = (ach / 100 if ach is not None and ach > 5 else ach)
+        d["discountPct"] = num("discountPct", 0, 100)
+    except (TypeError, ValueError) as e:
+        raise ValueError(str(e) if "batas" in str(e) else "Ada angka yang tidak valid.")
+    if d["rating"] is None and d["achievement"] is None and d["upliftPct"] is None:
+        raise ValueError("Isi minimal satu ukuran hasil: penilaian, pencapaian vs target, atau kenaikan revenue.")
+    d["areas"] = [a for a in (d.get("areas") or []) if a in ("bandung", "jakarta")] or ["bandung"]
+    d["nama"] = d["nama"].strip()[:80]
+    d["note"] = (d.get("note") or "")[:400]
+    return d
+
+
+def learning_insights(recs):
+    by_ch = {}
+    for ch in ("offline", "online_food", "marketplace", "event"):
+        L = T.learn(recs, ch)
+        by_ch[ch] = {"n": L["n"], "active": L["n"] >= 3, "notes": L["notes"]}
+    groups = {}
+    for r in recs:
+        if r["perf"] is None:
+            continue
+        groups.setdefault((r["mechanism"], r["platformLabel"]), []).append(r)
+    mech = []
+    for (m, pl), xs in groups.items():
+        tr = [x["takeRate"] for x in xs if x["takeRate"] is not None]
+        good = [x["days"] for x in xs if x["perf"] >= 1]
+        mech.append({"mechanism": m, "label": E.MECHANISMS.get(m, m), "platformLabel": pl, "n": len(xs),
+                     "avgPerf": sum(x["perf"] for x in xs) / len(xs), "avgTakeRate": sum(tr) / len(tr) if tr else None,
+                     "bestDays": round(sum(good) / len(good)) if good else None})
+    mech.sort(key=lambda x: -x["avgPerf"])
+    return {"total": len(recs), "byChannel": by_ch, "mechanisms": mech}
+
+
+@app.get("/api/learnings")
+def list_learnings(user=Depends(current_user)):
+    recs = learning_records()
+    return {"records": recs, "insights": learning_insights(recs)}
+
+
+@app.post("/api/learnings")
+def add_learning(body: dict, user=Depends(require("head", "planner", "finance", "channel_pic"))):
+    try:
+        d = clean_learning(body, profiles_map())
+    except ValueError as e:
+        err(400, str(e))
+    d.update({"id": secrets.token_hex(5), "by": user["name"], "byId": user["id"], "createdAt": now_iso()})
+    db.learnings.insert_one(d)
+    return clean(d)
+
+
+@app.delete("/api/learnings/{lid}")
+def del_learning(lid: str, user=Depends(require("head", "planner", "finance", "channel_pic"))):
+    r = db.learnings.find_one({"id": lid})
+    if not r:
+        err(404, "Data tidak ditemukan.")
+    if not (user.get("isAdmin") or user["perm"] == "head" or r.get("byId") == user["id"]):
+        err(403, "Hanya pembuat data atau Marketing Manager yang bisa menghapus.")
+    db.learnings.delete_one({"id": lid})
+    return {"ok": True}
+
+
+@app.post("/api/learnings/import")
+async def import_learnings(request: Request, user=Depends(require("head", "planner", "finance", "channel_pic"))):
+    text = (await request.body()).decode("utf-8-sig")
+    profs = profiles_map()
+    sample = text.splitlines()[0] if text.strip() else ""
+    delim = ";" if sample.count(";") > sample.count(",") else ","
+    mech_by_label = {v.lower(): k for k, v in E.MECHANISMS.items()}
+    obj_by_label = {v.lower(): k for k, v in E.OBJECTIVES.items()}
+    ok, errors = 0, []
+    for i, row in enumerate(csv.DictReader(io.StringIO(text), delimiter=delim), start=2):
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        if not any(row.values()):
+            continue
+        plat = row.get("platform", "").lower()
+        pid = next((p["id"] for p in profs.values() if plat and (plat == p["id"] or plat in p["label"].lower())), None)
+        mech = row.get("jenis_promo", "").lower()
+        mid = mech if mech in E.MECHANISMS else mech_by_label.get(mech) or (T.parse_mechanism(mech)[0] if mech else None)
+        obj = row.get("tujuan", "").lower()
+        area = row.get("area", "").lower()
+        body = {"nama": row.get("nama"), "platformProfileId": pid, "mechanism": mid,
+                "objective": obj if obj in E.OBJECTIVES else obj_by_label.get(obj),
+                "areas": ["jakarta"] if "jak" in area or "jabo" in area else ["bandung"],
+                "periodStart": row.get("mulai"), "periodEnd": row.get("selesai"), "rating": row.get("hasil_1_5"),
+                "takeRate": row.get("take_rate_pct"), "upliftPct": row.get("kenaikan_revenue_pct"),
+                "achievement": row.get("pencapaian_target_pct"), "discountPct": row.get("diskon_pct"), "note": row.get("catatan")}
+        if body["achievement"] not in (None, ""):
+            try:
+                body["achievement"] = float(str(body["achievement"]).replace(",", ".")) / 100
+            except ValueError:
+                pass
+        try:
+            d = clean_learning(body, profs)
+        except ValueError as e:
+            errors.append(f"Baris {i}: {e}")
+            continue
+        d.update({"id": secrets.token_hex(5), "by": user["name"], "byId": user["id"], "createdAt": now_iso()})
+        db.learnings.insert_one(d)
+        ok += 1
+    return {"imported": ok, "errors": errors[:20]}
+
+
+@app.get("/api/backup")
+def backup(user=Depends(require("head"))):
+    data = {"exportedAt": now_iso(), "app": "CRK Promo Calculator"}
+    for col in ("products", "profiles", "promos", "promo_logs", "comments", "learnings", "price_versions", "profile_versions", "invites"):
+        data[col] = clean(list(db[col].find({})))
+    data["settings"] = public_settings(get_settings())
+    data["members"] = [{k: v for k, v in clean(m).items() if k != "pinHash"} for m in db.members.find({})]
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="crk-promo-backup-{today().isoformat()}.json"'})
 
 
 @app.post("/api/moments")

@@ -157,7 +157,7 @@ export default function PromoDetail({ st, reload, id }) {
               </div>
               <div className="col-span-2 md:col-span-4 flex flex-wrap gap-2">
                 <button className="btn-ghost" onClick={() => call("actual", act, "Hasil aktual tersimpan")}>Simpan hasil</button>
-                <button className="btn-primary" onClick={() => call("actual", { ...act, finish: true }, "Promo ditutup", true)}>Simpan & tutup promo</button>
+                <button className="btn-primary" onClick={() => call("actual", { ...act, finish: true }, "Promo ditutup — hasilnya masuk Data belajar", true)}>Simpan & tutup promo</button>
               </div>
             </div>
           )}

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot } from "lucide-react";
+import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot, GraduationCap } from "lucide-react";
 import { api, setToken, getToken } from "./lib";
 import { Loader, useToast, Sheet } from "./ui";
 import Login from "./pages/Login";
@@ -15,6 +15,7 @@ import Settings from "./pages/Settings";
 import Report from "./pages/Report";
 import CalendarPage from "./pages/Calendar";
 import Assistant, { BotFace } from "./pages/Assistant";
+import Learning from "./pages/Learning";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -36,6 +37,7 @@ const NAV = [
 ];
 const MORE = [
   { to: "/asisten", label: "Asisten timing", short: "Asisten", icon: Bot },
+  { to: "/belajar", label: "Data belajar", short: "Belajar", icon: GraduationCap },
   { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
   { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
   { to: "/settings", label: "Settings", icon: SetI },
@@ -78,6 +80,7 @@ function Main() {
     case "/rekomendasi": page = <Recommend {...props} />; break;
     case "/kalender": page = <CalendarPage {...props} />; break;
     case "/asisten": page = <Assistant {...props} />; break;
+    case "/belajar": page = <Learning {...props} />; break;
     case "/library": page = <Library {...props} />; break;
     case "/promo": page = <PromoDetail key={arg} {...props} id={arg} />; break;
     case "/produk": page = <Products {...props} />; break;
@@ -95,7 +98,7 @@ function Main() {
   const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo"));
 
   return (
-    <div className="min-h-screen pb-24 lg:pb-10 overflow-x-clip">
+    <div className="min-h-screen pb-24 xl:pb-10 overflow-x-clip">
       <header className="sticky top-0 z-40 bg-bata text-cream">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
           <a href="#/" className="flex items-center gap-2 shrink-0" aria-label="Beranda">
@@ -105,7 +108,7 @@ function Main() {
               <div className="text-[17px]"><b className="font-extrabold">Promo</b> Calculator</div>
             </div>
           </a>
-          <nav className="hidden lg:flex ml-4 gap-0.5">
+          <nav className="hidden xl:flex ml-4 gap-0.5">
             {[...nav, ...moreNav].map((n) => (
               <a key={n.to} href={`#${n.to}`} className={`relative px-2.5 py-1.5 rounded-full text-[13.5px] font-semibold whitespace-nowrap ${active(n.to) ? "text-bata" : "text-cream/85 hover:text-cream"}`}>
                 {active(n.to) && <motion.span layoutId="navpill" className="absolute inset-0 rounded-full bg-cream" transition={{ type: "spring", stiffness: 400, damping: 30 }} />}
@@ -118,7 +121,7 @@ function Main() {
               <div className="text-[13px] font-bold">{st.user.name}</div>
               <div className="text-[11px] opacity-80">{st.roles[st.user.role]}</div>
             </div>
-            <button onClick={logout} className="hidden lg:flex w-10 h-10 rounded-full hover:bg-bata-dark items-center justify-center" aria-label="Logout"><LogOut size={18} /></button>
+            <button onClick={logout} className="hidden xl:flex w-10 h-10 rounded-full hover:bg-bata-dark items-center justify-center" aria-label="Logout"><LogOut size={18} /></button>
           </div>
         </div>
       </header>
@@ -135,14 +138,14 @@ function Main() {
         {path !== "/asisten" && (
           <motion.a href="#/asisten" aria-label="Buka asisten timing promo" title="Asisten timing promo"
             initial={{ scale: 0, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
-            className={`fixed z-40 right-4 bottom-20 lg:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 items-center gap-2 pr-3 ${path === "/hitung" ? "hidden lg:flex" : "flex"}`}>
+            className={`fixed z-40 right-4 bottom-20 xl:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 items-center gap-2 pr-3 ${path === "/hitung" ? "hidden lg:flex" : "flex"}`}>
             <BotFace size={40} />
             <span className="hidden md:inline text-[13px] font-extrabold text-bata">Kapan promo?</span>
           </motion.a>
         )}
       </AnimatePresence>
 
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-paper border-t border-line safe-b">
+      <nav className="xl:hidden fixed bottom-0 inset-x-0 z-40 bg-paper border-t border-line safe-b">
         <div className="grid" style={{ gridTemplateColumns: `repeat(${nav.length + 1}, minmax(0, 1fr))` }}>
           {nav.map((n) => {
             const I = n.icon; const on = active(n.to);
