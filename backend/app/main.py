@@ -749,7 +749,11 @@ def api_recommend(body: dict, user=Depends(no_viewer)):
     if prof.get("channelType") == "event":
         body = {**body, "fixedCosts": body.get("fixedCosts") or copy.deepcopy(prof.get("eventFixedTemplate") or []),
                 "trackingReady": True}
-    res = E.recommend(body, products_map(), prof, s, baseline_for(s, prof["id"], area), history_list())
+    return {"results": recommend_core(body, prof, s, area)}
+
+
+def recommend_core(body: dict, prof: dict, s: dict, area: str, top: int = 5) -> list:
+    res = E.recommend(body, products_map(), prof, s, baseline_for(s, prof["id"], area), history_list(), top=top)
     for x in res:
         x["promo"]["platformProfileId"] = prof["id"]
         x["promo"]["areas"] = [area]
@@ -763,7 +767,7 @@ def api_recommend(body: dict, user=Depends(no_viewer)):
             start = today() + timedelta(days=7)
             x["promo"]["periodStart"] = start.isoformat()
             x["promo"]["periodEnd"] = (start + timedelta(days=adv["rec"] - 1)).isoformat()
-    return {"results": res}
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -1694,7 +1698,91 @@ def clean_ctx(ctx: dict) -> dict:
                 out.pop(k)
     if out.get("mechanism") not in E.MECHANISMS:
         out.pop("mechanism", None)
+    if out.get("intent") not in ("what", "when"):
+        out.pop("intent", None)
+    try:
+        out["maxDiscountPct"] = max(5, min(50, int(float(out["maxDiscountPct"]))))
+    except (KeyError, TypeError, ValueError):
+        out.pop("maxDiscountPct", None)
     return out
+
+
+AREA_LABEL = {"bandung": "Bandung Raya", "jakarta": "Jabodetabek"}
+
+
+def bot_what(ctx: dict, profs: dict, user: dict) -> dict:
+    """Jawaban bot untuk 'promo apa yang cocok': 3 promo terbaik + waktu terbaik untuk masing-masing."""
+    if is_viewer(user):
+        return {"context": ctx, "reply": "Rekomendasi promo memuat angka margin, jadi hanya untuk tim yang menghitung promo. "
+                                        "Saya tetap bisa bantu soal kapan promo sebaiknya jalan.",
+                "chips": [{"label": "Kapan waktu terbaiknya?", "set": {"intent": "when"}}]}
+    prof = profs[ctx["platformProfileId"]]
+    s = get_settings()
+    area = (ctx.get("areas") or ["bandung"])[0]
+    area = area if area in AREA_LABEL else "bandung"
+    max_disc = ctx.get("maxDiscountPct") or 20
+    body = {"platformProfileId": prof["id"], "objective": ctx["objective"], "objective2": ctx.get("objective2"), "area": area,
+            "maxDiscountPct": max_disc, "includeProducts": ctx.get("products") or []}
+    if prof.get("channelType") == "event":
+        body.update({"fixedCosts": copy.deepcopy(prof.get("eventFixedTemplate") or []), "trackingReady": True})
+    other = "jakarta" if area == "bandung" else "bandung"
+    base_chips = [{"label": f"Area {AREA_LABEL[other]}", "set": {"areas": [other]}},
+                  {"label": "Ganti objective", "set": {"objective": None, "objective2": None}},
+                  {"label": "Ganti channel", "set": {"platformProfileId": None}}]
+    try:
+        res = recommend_core(body, prof, s, area, top=3)
+    except E.CalcError as e:
+        return {"context": ctx, "reply": str(e), "chips": base_chips}
+    obj = T.OBJ_LABEL.get(ctx["objective"], ctx["objective"])
+    o2 = f" (pendukung: {T.OBJ_LABEL[ctx['objective2']]})" if ctx.get("objective2") else ""
+    if not res:
+        up = min(50, max_disc + 10)
+        return {"context": ctx, "chips": ([{"label": f"Diskon maks. {up}%", "set": {"maxDiscountPct": up}}] if up > max_disc else []) + base_chips,
+                "reply": f"Untuk {obj}{o2} di {prof['label']} ({AREA_LABEL[area]}), belum ada promo yang tetap untung setelah HPP dan potongan "
+                         f"platform dengan diskon maksimal {max_disc}%. Coba naikkan batas diskon, ganti objective, atau pilih channel lain."}
+    cards = []
+    for x in res:
+        adv = x["result"].get("durationAdvice") or {}
+        timing = None
+        try:
+            tr = run_timing({**ctx, "mechanism": x["promo"]["mechanism"], "duration": adv.get("rec") or 7,
+                             "products": sorted({i["productId"] for i in x["promo"].get("items") or [] if i.get("productId")}),
+                             "checkStart": None, "checkEnd": None, "excludeId": None})
+            b = (tr.get("recommendations") or [None])[0]
+            if b:
+                timing = {k: b.get(k) for k in ("start", "end", "range", "score", "startDay")}
+                timing["cautions"] = b.get("cautions") or []
+                x["promo"]["periodStart"], x["promo"]["periodEnd"] = b["start"], b["end"]
+        except HTTPException:
+            pass
+        cards.append({"rank": x.get("rank"), "badge": x.get("badge"), "reason": x.get("reason"), "score": x.get("score"),
+                      "promo": x["promo"], "timing": timing, "mechanismLabel": E.MECHANISMS.get(x["promo"]["mechanism"]),
+                      "result": {k: x["result"].get(k) for k in ("unit", "health", "margin", "menarik", "gate", "quadrant", "contribution", "durationAdvice")}})
+    t = cards[0]
+    u = t["result"]["unit"]
+    lines = [f"Untuk {obj}{o2} di {prof['label']} ({AREA_LABEL[area]}), promo yang paling cocok: **{t['promo']['nama']}** "
+             f"({(t['mechanismLabel'] or '').lower()})."]
+    lines.append(f"Harga {E.rp(u['listPrice'])} → {E.rp(u['customerPays'])} (hemat {u['discountPct']*100:.0f}%), CM per unit "
+                 f"**{E.rp(u['cm'])}** ({u['cmPct']*100:.1f}%). Sehat: {t['result']['health']['label']}, Margin: {t['result']['margin']['label']}, "
+                 f"Menarik: {t['result']['menarik']['label']}, Gate **{t['result']['gate']}**.")
+    d = t["result"].get("durationAdvice") or {}
+    if t["timing"]:
+        lines.append(f"Waktu terbaik menjalankannya: **{t['timing']['range']}** (skor {t['timing']['score']}/100)"
+                     + (f", durasi saran {d['rec']} hari" if d.get("rec") else "") + "."
+                     + (" Perhatian: " + "; ".join(t["timing"]["cautions"]) + "." if t["timing"]["cautions"] else ""))
+    if len(cards) > 1:
+        lines.append("Pilihan lain: " + "; ".join(
+            f"{c['rank']}. {c['promo']['nama']} (CM {E.rp(c['result']['unit']['cm'])}, Gate {c['result']['gate']})" for c in cards[1:]) + ".")
+    lines.append(f"Saya mencoba semua kombinasi produk dan jenis promo dengan diskon maksimal {max_disc}%, lalu hanya mengambil yang tetap "
+                 "untung setelah HPP dan potongan platform. Urutan berdasarkan skor Sehat, Margin, Menarik, dan kecocokan objective.")
+    chips = [{"label": "Kapan waktu terbaiknya?", "set": {"intent": "when", "mechanism": t["promo"]["mechanism"]}}]
+    for up in (30, 40):
+        if up > max_disc:
+            chips.append({"label": f"Diskon maks. {up}%", "set": {"maxDiscountPct": up}})
+            break
+    if max_disc > 10:
+        chips.append({"label": "Diskon maks. 10%", "set": {"maxDiscountPct": 10}})
+    return {"context": ctx, "reply": "\n\n".join(lines), "promos": cards, "chips": chips + base_chips}
 
 
 def run_timing(ctx: dict):
@@ -1747,7 +1835,13 @@ def api_bot(body: dict, user=Depends(current_user)):
     if ctx.pop("durationAuto", None):
         ctx.pop("duration", None)
     if msg:
+        intent = T.parse_intent(msg)
+        if intent:
+            ctx["intent"] = intent
         ctx = T.parse_message(msg, ctx, P, profs, today())
+        m_disc = re.search(r"(?:diskon|potongan)\s*(?:maks(?:imal)?\.?|max)\s*(\d{1,2})\s*%?", msg.lower())
+        if m_disc:
+            ctx["maxDiscountPct"] = m_disc.group(1)
         mech, dpct = T.parse_mechanism(msg)
         if mech:
             ctx["mechanism"] = mech
@@ -1768,8 +1862,11 @@ def api_bot(body: dict, user=Depends(current_user)):
             return {"context": ctx, "reply": "Promo ini mau dijalankan di channel mana?",
                     "chips": [{"label": p["label"], "set": {"platformProfileId": p["id"]}} for p in profs.values()
                               if not p["label"].endswith("(lama)")]}
-        return {"context": ctx, "reply": "Tujuan utamanya apa? Ini menentukan apakah saya cari hari ramai atau hari sepi.",
+        return {"context": ctx, "reply": ("Tujuan utamanya apa? Ini menentukan jenis promo yang saya cari." if ctx.get("intent") == "what"
+                                          else "Tujuan utamanya apa? Ini menentukan apakah saya cari hari ramai atau hari sepi."),
                 "chips": [{"label": T.OBJ_LABEL[k].capitalize(), "set": {"objective": k}} for k in T.OBJ_LABEL]}
+    if ctx.get("intent") == "what":
+        return bot_what(ctx, profs, user)
     prof_b = profs.get(ctx["platformProfileId"]) or {}
     adv = T.duration_advice(ctx.get("mechanism"), ctx.get("objective"), prof_b.get("channelType"), ctx.get("discountPct"),
                             ctx.get("health"), ctx.get("stampN"),
@@ -1841,6 +1938,9 @@ def api_bot(body: dict, user=Depends(current_user)):
              {"label": "7 hari", "set": {"duration": 7}}, {"label": "14 hari", "set": {"duration": 14}},
              {"label": "30 hari", "set": {"duration": 30}}, {"label": "Bulan depan", "message": "bulan depan"},
              {"label": "Ganti objective", "set": {"objective": None}}, {"label": "Ganti channel", "set": {"platformProfileId": None}}]
+    if not is_viewer(user):
+        chips.insert(0, {"label": "Promo apa yang cocok?", "set": {"intent": "what", "mechanism": None, "checkStart": None, "checkEnd": None,
+                                                                 "excludeId": None, "promoName": None}})
     return {"context": ctx, "reply": "\n\n".join(lines), "result": res, "chips": chips}
 
 

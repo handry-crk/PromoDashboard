@@ -366,3 +366,34 @@ def test_primary_and_supporting_objective():
     l = c.post("/api/learnings", headers=H(ha), json={"nama": "Lama", "platformProfileId": "gofood", "mechanism": "bundle", "objective": "aov",
                "objective2": "trial", "areas": ["jakarta"], "periodStart": "2026-08-01", "periodEnd": "2026-08-14", "rating": 4})
     assert l.status_code == 200 and l.json()["objective2"] == "trial"
+
+
+def test_bot_recommends_which_promo():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    # asks for missing info first, keeping the intent
+    b = c.post("/api/bot", headers=H(ha), json={"message": "promo apa yang cocok di gerobak?"}).json()
+    assert b["context"]["intent"] == "what" and "promos" not in b and b["chips"]
+    b = c.post("/api/bot", headers=H(ha), json={"context": b["context"], "set": {"objective": "aov"}}).json()
+    assert len(b["promos"]) == 3 and "paling cocok" in b["reply"]
+    top = b["promos"][0]
+    assert top["result"]["gate"] != "HOLD" and top["result"]["unit"]["cm"] > 0
+    assert top["timing"]["start"] == top["promo"]["periodStart"] and top["promo"]["platformProfileId"] == "offline_gerobak"
+    assert top["promo"]["nama"] in b["reply"]
+    # one sentence with everything
+    b2 = c.post("/api/bot", headers=H(ha), json={"message": "rekomendasi promo gofood jakarta untuk trial dan naikkan aov, diskon maks 30%"}).json()
+    assert b2["promos"] and b2["context"]["maxDiscountPct"] == 30 and b2["promos"][0]["promo"]["objective2"]
+    assert all(x["promo"]["areas"] == ["jakarta"] for x in b2["promos"])
+    # switching back to timing works and offers the promo question again
+    w = c.post("/api/bot", headers=H(ha), json={"context": b["context"], "set": {"intent": "when", "mechanism": top["promo"]["mechanism"]}}).json()
+    assert w["result"]["recommendations"] and any(ch["label"] == "Promo apa yang cocok?" for ch in w["chips"])
+    # plain timing question still answers timing
+    k = c.post("/api/bot", headers=H(ha), json={"message": "kapan promo aov di gofood 2 minggu?"}).json()
+    assert k["context"]["intent"] == "when" and k["result"]["recommendations"] and "promos" not in k
+    # viewer gets no margin numbers
+    r = c.post("/api/members", headers=H(ha), json={"name": "Vina", "email": "vina@citarasakuliner.com", "role": "viewer"}).json()
+    tv = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "9999"}).json()["token"]
+    v = c.post("/api/bot", headers=H(tv), json={"message": "promo apa yang cocok di gerobak untuk aov"}).json()
+    assert "promos" not in v and "CM" not in v["reply"]

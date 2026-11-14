@@ -338,6 +338,21 @@ OBJ_WORDS = [
 ]
 
 
+WHAT_RE = re.compile(r"promo apa|promo (yang|yg) (cocok|bagus|pas|tepat|terbaik)|apa (yang|yg) cocok|rekomendasi(kan)? promo|saran promo|ide promo|"
+                     r"jenis promo|mekanisme apa|tipe promo|promo terbaik|promo mana|sebaiknya promo|bikin promo apa|buat promo apa")
+WHEN_RE = re.compile(r"\bkapan\b|\btanggal\b|\bwaktu\b|\btiming\b|\bjadwal\b")
+
+
+def parse_intent(text: str):
+    """'what' = minta rekomendasi promo apa; 'when' = minta waktu promo; None = tidak jelas (pakai konteks sebelumnya)."""
+    t = (text or "").lower()
+    if WHAT_RE.search(t):
+        return "what"
+    if WHEN_RE.search(t):
+        return "when"
+    return None
+
+
 def parse_message(text: str, ctx: dict, products: dict, profiles: dict, today: date) -> dict:
     t = " " + (text or "").lower() + " "
     out = dict(ctx or {})

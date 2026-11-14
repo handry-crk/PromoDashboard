@@ -37,7 +37,7 @@ const NAV = [
   { to: "/library", label: "Library", icon: LibI },
 ];
 const MORE = [
-  { to: "/asisten", label: "Asisten timing", short: "Asisten", icon: Bot },
+  { to: "/asisten", label: "Asisten promo", short: "Asisten", icon: Bot },
   { to: "/belajar", label: "Data belajar", short: "Belajar", icon: GraduationCap },
   { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
   { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
@@ -139,11 +139,11 @@ function Main() {
 
       <AnimatePresence>
         {path !== "/asisten" && (
-          <motion.a href="#/asisten" aria-label="Buka asisten timing promo" title="Asisten timing promo"
+          <motion.a href="#/asisten" aria-label="Buka asisten promo" title="Asisten promo"
             initial={{ scale: 0, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
             className={`fixed z-40 right-4 bottom-20 xl:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 items-center gap-2 pr-3 ${path === "/hitung" ? "hidden lg:flex" : "flex"}`}>
             <BotFace size={40} />
-            <span className="hidden md:inline text-[13px] font-extrabold text-bata">Kapan promo?</span>
+            <span className="hidden md:inline text-[13px] font-extrabold text-bata">Tanya promo</span>
           </motion.a>
         )}
       </AnimatePresence>

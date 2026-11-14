@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, CalendarDays, Calculator, RotateCcw, AlertTriangle, Check } from "lucide-react";
-import { api } from "../lib";
-import { useToast, CountUp } from "../ui";
+import { Send, CalendarDays, Calculator, RotateCcw, AlertTriangle, Check, Save } from "lucide-react";
+import { api, rp, pc } from "../lib";
+import { useToast, CountUp, Badge } from "../ui";
 import { go } from "../App";
 
 const STORE = "crk_bot_chat";
 const SUGGEST = [
+  "Promo apa yang cocok di gerobak untuk naikkan AOV?",
+  "Rekomendasi promo GoFood Jakarta untuk trial, diskon maks 30%",
   "Kapan promo AOV mozza di GoFood 2 minggu bulan depan?",
   "Kapan promo isi jam sepi di gerobak Bandung?",
   "Shopee frozen 3 hari bulan Desember",
@@ -96,7 +98,39 @@ function RecCard({ rec, ctx, i, onApply }) {
   );
 }
 
-export default function Assistant({ st }) {
+function PromoCard({ c, i, onOpen, onSave, canSave }) {
+  const u = c.result.unit, d = c.result.durationAdvice;
+  return (
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 + i * 0.1 }}
+      className={`rounded-2xl border px-3 py-3 ${i === 0 ? "border-bata bg-blush/60" : "border-line bg-paper"}`}>
+      <div className="flex items-start gap-3">
+        <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center font-extrabold ${i === 0 ? "bg-bata text-cream" : "bg-blush text-bata"}`}>{c.rank}</div>
+        <div className="min-w-0 flex-1">
+          <div className={`text-[11px] font-extrabold ${i === 0 ? "text-bata" : "text-ink/55"}`}>{c.badge || c.mechanismLabel}</div>
+          <div className="font-extrabold text-[15.5px] leading-snug break-words">{c.promo.nama}</div>
+          <div className="text-[12px] text-ink/60">{c.mechanismLabel}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5 mt-2 text-[13px]">
+        <div className="rounded-xl bg-cream/70 px-2.5 py-1.5"><div className="text-[11px] text-ink/55 font-semibold">Harga</div><div className="font-bold num">{rp(u.listPrice)} → {rp(u.customerPays)}</div></div>
+        <div className="rounded-xl bg-cream/70 px-2.5 py-1.5"><div className="text-[11px] text-ink/55 font-semibold">CM per unit</div><div className="font-bold num">{rp(u.cm)} ({pc(u.cmPct)})</div></div>
+        {c.timing && <div className="rounded-xl bg-cream/70 px-2.5 py-1.5"><div className="text-[11px] text-ink/55 font-semibold">Waktu terbaik</div><div className="font-bold">{c.timing.range}</div></div>}
+        {d && <div className="rounded-xl bg-cream/70 px-2.5 py-1.5"><div className="text-[11px] text-ink/55 font-semibold">Durasi saran</div><div className="font-bold">{d.rec} hari ({d.min}–{d.max})</div></div>}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] font-semibold">
+        <Badge label={c.result.gate} />
+        <span className="pill">Sehat: {c.result.health.label}</span><span className="pill">Margin: {c.result.margin.label}</span><span className="pill">Menarik: {c.result.menarik.label}</span>
+      </div>
+      {c.reason && <p className="text-[13px] text-ink/70 mt-2">{c.reason}</p>}
+      <div className="flex flex-wrap gap-2 mt-2">
+        <button className="btn-primary !min-h-[36px] !text-[13px]" onClick={() => onOpen(c)}><Calculator size={15} />Buka di kalkulator</button>
+        {canSave && <button className="btn-soft !min-h-[36px] !text-[13px]" onClick={() => onSave(c)}><Save size={15} />Simpan draft</button>}
+      </div>
+    </motion.div>
+  );
+}
+
+export default function Assistant({ st, reload }) {
   const toast = useToast();
   const [msgs, setMsgs] = useState(() => { try { return JSON.parse(sessionStorage.getItem(STORE) || "null")?.msgs || []; } catch { return []; } });
   const [ctx, setCtx] = useState(() => { try { return JSON.parse(sessionStorage.getItem(STORE) || "null")?.ctx || {}; } catch { return {}; } });
@@ -117,7 +151,7 @@ export default function Assistant({ st }) {
       const r = await api("/bot", { method: "POST", body: { message, context: ctx, set, promoId, prefill } });
       await new Promise((ok) => setTimeout(ok, Math.max(0, 650 - (Date.now() - t0))));
       setCtx(r.context);
-      setMsgs((m) => [...m, { from: "bot", text: r.reply, result: r.result, chips: r.chips, ctx: r.context }]);
+      setMsgs((m) => [...m, { from: "bot", text: r.reply, result: r.result, promos: r.promos, chips: r.chips, ctx: r.context }]);
     } catch (e) { setMsgs((m) => [...m, { from: "bot", text: e.message, error: true }]); }
     finally { setBusy(false); }
   };
@@ -147,6 +181,12 @@ export default function Assistant({ st }) {
     go("/hitung");
   };
 
+  const canSave = st.user.isAdmin || ["head", "planner", "channel_pic"].includes(st.user.perm);
+  const openPromo = (c) => { sessionStorage.setItem("crk_prefill", JSON.stringify({ ...c.promo, _fromCalendar: true })); go("/hitung"); };
+  const savePromo = async (c) => {
+    try { const p = await api("/promos", { method: "POST", body: c.promo }); toast("Tersimpan sebagai draft"); reload?.(); go(`/promo/${p.id}`); }
+    catch (e) { toast(e.message, "bad"); }
+  };
   const reset = () => { setMsgs([]); setCtx({}); sessionStorage.removeItem(STORE); };
 
   return (
@@ -154,8 +194,8 @@ export default function Assistant({ st }) {
       <div className="flex items-center gap-3 mb-3">
         <BotFace size={52} talking={busy} />
         <div className="flex-1">
-          <h2 className="title"><b>Asisten</b> timing promo</h2>
-          <div className="text-[13px] text-ink/60">Tanya kapan promo sebaiknya jalan. Saya baca momen, pola hari, jadwal promo lain, dan hasil promo sebelumnya.</div>
+          <h2 className="title"><b>Asisten</b> promo</h2>
+          <div className="text-[13px] text-ink/60">Tanya promo apa yang cocok dan kapan sebaiknya jalan. Saya hitung margin setelah HPP dan potongan platform, lalu baca momen, pola hari, jadwal promo lain, dan hasil promo sebelumnya.</div>
         </div>
         {!!msgs.length && <button onClick={reset} className="btn-soft !min-h-[38px] !px-3" aria-label="Mulai percakapan baru"><RotateCcw size={16} /></button>}
       </div>
@@ -193,6 +233,11 @@ export default function Assistant({ st }) {
                     <Heat heat={m.result.heat} picks={m.result.recommendations} />
                   </div>
                 )}
+                {m.promos?.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {m.promos.map((c, k) => <PromoCard key={c.promo.nama + k} c={c} i={k} onOpen={openPromo} onSave={savePromo} canSave={canSave} />)}
+                  </div>
+                )}
                 {m.chips?.length > 0 && i === msgs.length - 1 && (
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {m.chips.map((c) => (
@@ -217,7 +262,7 @@ export default function Assistant({ st }) {
 
       <form onSubmit={(e) => { e.preventDefault(); if (text.trim()) { ask({ message: text.trim() }); setText(""); } }}
         className="sticky bottom-20 xl:bottom-4 flex gap-2 bg-cream/90 backdrop-blur py-2">
-        <input className="field !rounded-full" placeholder="Tanya, mis. kapan promo GoFood 2 minggu bulan depan?" value={text} onChange={(e) => setText(e.target.value)} aria-label="Pertanyaan" />
+        <input className="field !rounded-full" placeholder="Tanya, mis. promo apa yang cocok di GoFood?" value={text} onChange={(e) => setText(e.target.value)} aria-label="Pertanyaan" />
         <button className="btn-primary !px-4" disabled={busy || !text.trim()} aria-label="Kirim"><Send size={18} /></button>
       </form>
     </div>
