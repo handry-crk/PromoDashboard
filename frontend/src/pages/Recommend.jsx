@@ -106,11 +106,12 @@ export default function Recommend({ st, reload }) {
                     <MiniBall title="Menarik" label={x.result.menarik.label} score={x.result.menarik.score} />
                     <Badge label={x.result.gate} /><span className="pill">{x.result.quadrant}</span>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-[13px]">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 text-[13px]">
                     <Kv k="Harga" v={`${rp(x.result.unit.listPrice)} → ${rp(x.result.unit.customerPays)}`} />
                     <Kv k="CM per unit" v={<CountUp value={x.result.unit.cm} format={rp} />} />
                     <Kv k="Potongan platform" v={x.result.unit.effectiveTakeRate == null ? "–" : pc(x.result.unit.effectiveTakeRate)} />
                     <Kv k="Contribution Target" v={rp(x.result.contribution)} />
+                    {x.result.durationAdvice && <Kv k="Durasi saran" v={`${x.result.durationAdvice.rec} hari (${x.result.durationAdvice.min}–${x.result.durationAdvice.max})`} />}
                   </div>
                   <div className="flex flex-wrap gap-2 mt-3">
                     <button className="btn-primary" onClick={() => open(x)}><ArrowUpRight size={18} />Buka di kalkulator</button>

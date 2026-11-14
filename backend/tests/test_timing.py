@@ -50,3 +50,23 @@ def test_parse_message():
     assert c["products"] == ["mozza-b"] and c["areas"] == ["bandung"] and c["from"] == "2026-12-01"
     c = T.parse_message("cek 1-14 des", c, products, profiles, TODAY)
     assert c["checkStart"] == "2026-12-01" and c["checkEnd"] == "2026-12-14"
+
+
+def test_duration_advice_rules():
+    a = T.duration_advice("flash_sale", "trial", "offline")
+    assert (a["min"], a["rec"], a["max"]) == (1, 2, 3)
+    a = T.duration_advice("diskon_persen", "aov", "offline", discount_pct=30, current=21)
+    assert a["max"] <= 7 and a["status"] == "terlalu panjang"
+    a = T.duration_advice("bundle", "aov", "offline", discount_pct=10, health="Sehat", current=21)
+    assert a["rec"] == 21 and a["status"] == "pas" and a["checkpoint"]
+    a = T.duration_advice("stamp_card", "repeat", "offline", stamp_n=8)
+    assert a["min"] >= 40 and a["rec"] <= 60
+    assert T.duration_advice("voucher_platform", "online", "marketplace")["rec"] == 3
+    assert T.duration_advice("bundle", "awareness", "event", event_days=3)["rec"] == 3
+    w = T.duration_advice("bundle", "aov", "offline", health="Waspada")
+    assert w["rec"] < 21
+    h = T.duration_advice("bundle", "aov", "offline", hist=[(14, 1.2), (14, 1.1), (28, 0.6)])
+    assert h["rec"] in (14, 21) and any("Histori" in r for r in h["reasons"])
+    assert T.parse_mechanism("diskon 25% mozza") == ("diskon_persen", 25.0)
+    d = T.duration_advice("diskon_persen", "aov", "offline", discount_pct=30, health="Waspada", current=21)
+    assert d["min"] <= d["rec"] <= d["max"] <= 7

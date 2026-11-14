@@ -78,3 +78,8 @@ Menu **Asisten** atau tombol bot di pojok kanan bawah. Tanya dengan bahasa biasa
 - **Skor 0–100 relatif** terhadap semua tanggal mulai dalam rentang yang dinilai. Hasilnya 1 waktu terbaik, 2 alternatif, 1 yang sebaiknya dihindari, dan heatmap skor per tanggal.
 - **Dari kalkulator:** tombol "Kapan sebaiknya?". Rekomendasi bisa langsung dipakai ke kalkulator atau dibuka di kalender.
 - **Indeks permintaan** adalah asumsi awal di `backend/app/timing.py`. Akan lebih tajam setelah hasil aktual promo diisi.
+
+## Rekomendasi durasi promo
+`duration_advice` di `backend/app/timing.py` memberi durasi saran dan rentang wajar. Tampil di kalkulator (kartu "Durasi promo" dengan tombol pakai saran), kartu rekomendasi promo, dan jawaban bot.
+- Dasar: tujuan promo, mekanisme (flash sale 1–3 hari, beli-gratis 3–7, bundle/tebus murah 14–30, happy hour 14–28, stamp card ≥ 30), channel (marketplace 1–7 hari, event mengikuti hari event), kedalaman diskon (≥ 30% maks. 7 hari, ≥ 20% maks. 14 hari), skor Sehat, batas investasi strategis, dan histori promo sejenis yang capai target.
+- Angka rentang adalah aturan awal; ubah di `DUR_OBJECTIVE` dan `DUR_MECH`.

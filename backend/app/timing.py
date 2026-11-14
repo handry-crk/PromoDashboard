@@ -383,3 +383,108 @@ def missing(ctx: dict) -> list[str]:
     if not ctx.get("objective"):
         need.append("objective")
     return need
+
+
+# ---------------------------------------------------------------------------
+# duration advice
+# ---------------------------------------------------------------------------
+DUR_OBJECTIVE = {  # (min, rekomendasi, max) hari
+    "trial": (5, 7, 10), "awareness": (3, 5, 7), "aov": (14, 21, 30), "jam_sepi": (14, 21, 28),
+    "repeat": (30, 45, 60), "online": (7, 14, 14), "capture": (14, 21, 30),
+}
+DUR_MECH = {
+    "flash_sale": ((1, 2, 3), "Flash sale kehilangan rasa mendesak bila lebih dari 3 hari"),
+    "bxgy": ((3, 5, 7), "Beli-gratis adalah diskon dalam: cukup singkat supaya margin tidak tergerus dan customer tidak terbiasa harga murah"),
+    "happy_hour": ((14, 21, 28), "Butuh 2–4 minggu supaya kebiasaan datang di jam sepi terbentuk"),
+    "voucher_next_visit": ((14, 21, 30), "Voucher dibagikan 2–3 minggu, lalu dipakai pada kunjungan berikutnya"),
+    "bundle": ((14, 21, 30), "Bundle butuh waktu dikenal crew dan customer; margin per paket masih terjaga"),
+    "addon": ((14, 21, 30), "Tebus murah bekerja lewat tawaran crew berulang, jadi perlu beberapa minggu"),
+    "min_belanja_gratis": ((7, 14, 21), "Hadiah minimum belanja efektif 1–3 minggu sebelum customer bosan"),
+}
+
+
+def duration_advice(mechanism: str, objective: str, ch: str, discount_pct: float | None = None, health: str | None = None,
+                    stamp_n: int | None = None, event_days: int | None = None, daily_invest: float | None = None,
+                    budget: float | None = None, hist: list[tuple] | None = None, current: int | None = None) -> dict:
+    reasons = []
+    lo, rec, hi = DUR_OBJECTIVE.get(objective or "trial", (7, 14, 21))
+    reasons.append(f"Tujuan {OBJ_LABEL.get(objective, objective or 'promo')}: umumnya {lo}–{hi} hari")
+    if mechanism in DUR_MECH:
+        (lo, rec, hi), why = DUR_MECH[mechanism]
+        reasons = [why]
+    if mechanism == "stamp_card":
+        n = max(int(stamp_n or 5), 2)
+        lo, rec, hi = max(30, n * 5), min(60, n * 7 + 10), 60
+        reasons = [f"Customer perlu waktu untuk {n} kali beli (±1 kali per minggu), jadi minimal {lo} hari"]
+    if ch == "marketplace" and mechanism not in ("stamp_card",):
+        lo, rec, hi = 1, 3, 7
+        reasons = ["Kampanye marketplace paling efektif 1–3 hari di sekitar tanggal kembar atau gajian"]
+    if ch == "event" and event_days:
+        lo = rec = hi = int(event_days)
+        reasons = [f"Mengikuti durasi event ({int(event_days)} hari)"]
+    d = discount_pct or 0
+    if ch != "event" and mechanism in ("diskon_persen", "potongan_rp", "harga_spesial", "voucher_platform", "bundle", "addon"):
+        if d >= 30:
+            hi, rec = min(hi, 7), min(rec, 5)
+            reasons.append(f"Diskon {d:.0f}% tergolong dalam: maksimal 7 hari agar tidak menjadi harga acuan baru")
+        elif d >= 20:
+            hi, rec = min(hi, 14), min(rec, 10)
+            reasons.append(f"Diskon {d:.0f}%: batasi sampai 2 minggu")
+        elif 0 < d < 10 and mechanism in ("bundle", "addon"):
+            reasons.append(f"Hemat hanya {d:.0f}%, aman dijalankan lebih lama")
+    lo = min(lo, rec)
+    if health and health.startswith("Waspada"):
+        rec = max(lo, round(rec * 0.7))
+        hi = max(rec, min(hi, round(hi * 0.75)))
+        reasons.append("Skor Sehat masih Waspada: mulai lebih pendek, perpanjang bila hasil sesuai target")
+    elif health and health.startswith("Tidak Sehat"):
+        rec, hi = lo, max(lo, min(hi, lo + 2))
+        reasons.append("Promo Tidak Sehat: bila tetap jalan, pakai durasi paling pendek")
+    lo = min(lo, rec)
+    if budget and daily_invest and daily_invest > 0:
+        cap = int(budget // daily_invest)
+        if cap < rec:
+            rec, hi = max(1, cap), max(1, cap)
+            lo = min(lo, rec)
+            reasons.append(f"Batas investasi hanya cukup untuk ±{max(1, cap)} hari")
+    hs = [x for x in (hist or []) if x[0] and x[1] is not None]
+    if len(hs) >= 3:
+        good = [x[0] for x in hs if x[1] >= 1]
+        if good:
+            avg = sum(good) / len(good)
+            rec = max(lo, min(hi, round((rec + avg) / 2)))
+            reasons.append(f"Histori: {len(good)} dari {len(hs)} promo sejenis yang capai target berjalan rata-rata {avg:.0f} hari")
+    if rec >= 7 and ch != "event":
+        snapped = max(7, round(rec / 7) * 7)
+        if lo <= snapped <= hi:
+            if snapped != rec:
+                rec = snapped
+            reasons.append("Kelipatan 7 hari supaya weekday dan weekend terwakili sama")
+    checkpoint = None
+    if rec >= 14:
+        checkpoint = "Evaluasi di hari ke-7: bila take rate di bawah 50% target, ubah mekanisme atau hentikan lebih awal"
+    elif rec >= 5:
+        checkpoint = f"Cek hasil di hari ke-{max(2, rec // 2)}"
+    status = None
+    if current:
+        status = "pas" if lo <= current <= hi else "terlalu pendek" if current < lo else "terlalu panjang"
+    return {"min": int(lo), "rec": int(rec), "max": int(hi), "reasons": reasons, "checkpoint": checkpoint,
+            "current": current, "status": status}
+
+
+MECH_WORDS = [
+    (r"flash ?sale", "flash_sale"), (r"b1g1|b2g1|beli \d gratis|buy \d get", "bxgy"), (r"happy ?hour", "happy_hour"),
+    (r"stamp|kartu cap", "stamp_card"), (r"voucher balik|kunjungan berikut", "voucher_next_visit"), (r"\bbundle\b|\bpaket\b", "bundle"),
+    (r"tebus|add.?on", "addon"), (r"ongkir", "ongkir"), (r"\bvoucher\b", "voucher_platform"), (r"harga spesial|harga khusus", "harga_spesial"),
+    (r"potongan", "potongan_rp"), (r"\bdiskon\b|\bdisc\b", "diskon_persen"),
+]
+
+
+def parse_mechanism(text: str):
+    t = (text or "").lower()
+    for pat, m in MECH_WORDS:
+        if re.search(pat, t):
+            pm = re.search(r"(\d{1,2})\s*%", t)
+            return m, (float(pm.group(1)) if pm else None)
+    pm = re.search(r"(\d{1,2})\s*%", t)
+    return (("diskon_persen", float(pm.group(1))) if pm else (None, None))

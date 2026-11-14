@@ -317,6 +317,8 @@ export default function Calculator({ st, reload, promoId }) {
                 products: [...new Set((promo.items || []).map((i) => i.productId))],
                 duration: Math.max(1, Math.round((new Date(promo.periodEnd) - new Date(promo.periodStart)) / 864e5) + 1),
                 checkStart: promo.periodStart, checkEnd: promo.periodEnd, promoName: promo.nama || undefined, excludeId: saved?.id,
+                mechanism: promo.mechanism, discountPct: o ? Math.round(o.unit.discountPct * 1000) / 10 : undefined, health: o?.health.label,
+                stampN: promo.params?.n,
                 _question: `Kapan sebaiknya ${promo.nama || "promo ini"} dijalankan?`,
               }));
               go("/asisten");
@@ -441,6 +443,39 @@ export default function Calculator({ st, reload, promoId }) {
             </div>
 
             {o.scenarios.target.event && <EventPanel o={o} />}
+
+            {o.durationAdvice && ch !== "event" && (() => {
+              const a = o.durationAdvice;
+              const bad = a.status && a.status !== "pas";
+              const span = Math.max(a.max, a.current || 0, 1) * 1.1;
+              const setDays = (n) => up({ periodEnd: new Date(new Date(promo.periodStart).getTime() + (n - 1) * 864e5).toISOString().slice(0, 10) });
+              return (
+                <section className={`card p-4 ${bad ? "border-warn" : ""}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-extrabold">Durasi promo</div>
+                    <div className="text-[13px] font-bold" style={{ color: bad ? "#B8741A" : "#2F6B4A" }}>
+                      {a.current ? `${a.current} hari · ${a.status}` : "Tanggal belum diisi"}
+                    </div>
+                  </div>
+                  <div className="relative h-7 mt-3">
+                    <div className="absolute inset-x-0 top-2.5 h-2 rounded-full bg-cream" />
+                    <motion.div className="absolute top-2.5 h-2 rounded-full bg-ok/60" initial={false}
+                      animate={{ left: `${(a.min / span) * 100}%`, width: `${Math.max(((a.max - a.min) / span) * 100, 2)}%` }} />
+                    <motion.div className="absolute top-1 w-1.5 h-5 rounded-full bg-ok" initial={false} animate={{ left: `${(a.rec / span) * 100}%` }} title={`Saran ${a.rec} hari`} />
+                    {a.current && <motion.div className="absolute top-0 w-4 h-4 mt-1.5 -ml-2 rounded-full border-[3px] bg-paper" style={{ borderColor: bad ? "#B8741A" : "#212121" }}
+                      initial={false} animate={{ left: `${Math.min(a.current / span, 1) * 100}%` }} transition={{ type: "spring", stiffness: 200, damping: 18 }} title="Durasi sekarang" />}
+                  </div>
+                  <div className="text-[13px] mt-1">Saran <b>{a.rec} hari</b> · rentang wajar {a.min}–{a.max} hari</div>
+                  <ul className="mt-1.5 text-[12.5px] text-ink/70 space-y-0.5">
+                    {a.reasons.map((r) => <li key={r}>● {r}</li>)}
+                    {a.checkpoint && <li>● {a.checkpoint}</li>}
+                  </ul>
+                  {a.current !== a.rec && canEdit && (
+                    <button className="btn-soft !min-h-[36px] !text-[13px] mt-2" onClick={() => { setDays(a.rec); toast(`Durasi diubah ke ${a.rec} hari`); }}>Pakai {a.rec} hari</button>
+                  )}
+                </section>
+              );
+            })()}
 
             {!!o.fixes?.length && (
               <section className="card p-4">

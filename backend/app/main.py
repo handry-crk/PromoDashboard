@@ -292,6 +292,7 @@ def compute(promo, areas=None):
         try:
             out[a] = E.run(per[a], P, prof, a, s, baseline_for(s, prof["id"], a), hist)
             out[a]["areaShare"] = per[a].get("_areaShare", 1)
+            out[a]["durationAdvice"] = advice_for(per[a], out[a], prof.get("channelType"))
         except E.CalcError as e:
             err(400, str(e))
     return out
@@ -624,6 +625,16 @@ def api_recommend(body: dict, user=Depends(current_user)):
     for x in res:
         x["promo"]["platformProfileId"] = prof["id"]
         x["promo"]["areas"] = [area]
+        u = x["result"]["unit"]
+        adv = T.duration_advice(x["promo"]["mechanism"], body.get("objective"), prof.get("channelType"), u["discountPct"] * 100,
+                                x["result"]["health"]["label"], (x["promo"].get("params") or {}).get("n"),
+                                (prof.get("eventDefaults") or {}).get("days") if prof.get("channelType") == "event" else None,
+                                hist=duration_history(x["promo"]["mechanism"]))
+        x["result"]["durationAdvice"] = adv
+        if not x["promo"].get("periodStart"):
+            start = today() + timedelta(days=7)
+            x["promo"]["periodStart"] = start.isoformat()
+            x["promo"]["periodEnd"] = (start + timedelta(days=adv["rec"] - 1)).isoformat()
     return {"results": res}
 
 
@@ -1200,6 +1211,40 @@ def timing_history():
     return out
 
 
+def duration_history(mechanism: str):
+    out = []
+    for p in db.promos.find({"status": "done", "mechanism": mechanism}):
+        a = (p.get("actual") or {}).get("achievement")
+        try:
+            n = (date.fromisoformat(p["periodEnd"]) - date.fromisoformat(p["periodStart"])).days + 1
+        except Exception:
+            continue
+        out.append((n, a))
+    return out
+
+
+def advice_for(promo: dict, o: dict, ch: str) -> dict:
+    u = o["unit"]
+    cur = None
+    try:
+        cur = (date.fromisoformat(promo["periodEnd"]) - date.fromisoformat(promo["periodStart"])).days + 1
+        cur = cur if cur > 0 else None
+    except Exception:
+        pass
+    t = o["scenarios"]["target"]
+    days = o["scenarios"]["meta"].get("days") or 1
+    ev = (o["scenarios"]["meta"].get("event") or {}).get("days")
+    strat = promo.get("strategic") or {}
+    return T.duration_advice(promo.get("mechanism"), promo.get("objective"), ch, pct_of(u), o["health"]["label"],
+                             (promo.get("params") or {}).get("n"), ev, (t.get("merchantDiscount") or 0) / days,
+                             float(strat["maxInvestment"]) if strat.get("isStrategic") and strat.get("maxInvestment") else None,
+                             duration_history(promo.get("mechanism")), cur)
+
+
+def pct_of(u: dict) -> float:
+    return (u.get("perceivedSaving", u.get("discountTotal", 0)) / u["listPrice"] * 100) if u.get("listPrice") else 0
+
+
 def run_timing(ctx: dict):
     profs = profiles_map()
     prof = profs.get(ctx.get("platformProfileId"))
@@ -1229,7 +1274,10 @@ def ctx_from_promo(pid: str) -> dict:
         dur = None
     return {"platformProfileId": p.get("platformProfileId"), "objective": p.get("objective"), "areas": p.get("areas"),
             "products": sorted({i.get("productId") for i in p.get("items") or [] if i.get("productId")}),
-            "duration": dur, "excludeId": p["id"], "promoName": p.get("nama"),
+            "duration": dur, "excludeId": p["id"], "promoName": p.get("nama"), "mechanism": p.get("mechanism"),
+            "discountPct": round((next(iter((p.get("summary") or {}).values()), {}).get("discountPct") or 0) * 100, 1),
+            "health": (next(iter((p.get("summary") or {}).values()), {}).get("health") or {}).get("label"),
+            "stampN": (p.get("params") or {}).get("n"),
             "checkStart": p.get("periodStart"), "checkEnd": p.get("periodEnd")}
 
 
@@ -1243,8 +1291,15 @@ def api_bot(body: dict, user=Depends(current_user)):
     if body.get("prefill"):
         ctx.update({k: v for k, v in body["prefill"].items() if v not in (None, "", [])})
     msg = body.get("message") or ""
+    if ctx.pop("durationAuto", None):
+        ctx.pop("duration", None)
     if msg:
         ctx = T.parse_message(msg, ctx, P, profs, today())
+        mech, dpct = T.parse_mechanism(msg)
+        if mech:
+            ctx["mechanism"] = mech
+        if dpct is not None:
+            ctx["discountPct"] = dpct
     if body.get("set"):
         for k, v in body["set"].items():
             if v is None:
@@ -1259,9 +1314,19 @@ def api_bot(body: dict, user=Depends(current_user)):
                               if not p["label"].endswith("(lama)")]}
         return {"context": ctx, "reply": "Tujuan utamanya apa? Ini menentukan apakah saya cari hari ramai atau hari sepi.",
                 "chips": [{"label": T.OBJ_LABEL[k].capitalize(), "set": {"objective": k}} for k in T.OBJ_LABEL]}
+    prof_b = profs.get(ctx["platformProfileId"]) or {}
+    adv = T.duration_advice(ctx.get("mechanism"), ctx.get("objective"), prof_b.get("channelType"), ctx.get("discountPct"),
+                            ctx.get("health"), ctx.get("stampN"),
+                            (prof_b.get("eventDefaults") or {}).get("days") if prof_b.get("channelType") == "event" else None,
+                            hist=duration_history(ctx.get("mechanism")) if ctx.get("mechanism") else None,
+                            current=ctx.get("duration"))
+    if not ctx.get("duration"):
+        ctx["duration"] = adv["rec"]
+        ctx["durationAuto"] = True
     res = run_timing(ctx)
     if res.get("error"):
         return {"context": ctx, "reply": res["error"], "chips": []}
+    res["durationAdvice"] = adv
     prod = ", ".join(P[x]["nama"] for x in (ctx.get("products") or [])[:3] if x in P)
     who = f" untuk {prod}" if prod else ""
     lines = []
@@ -1288,10 +1353,20 @@ def api_bot(body: dict, user=Depends(current_user)):
             lines.append("Alternatif: " + ", ".join(f"{a['range']} (skor {a['score']})" for a in alts) + ".")
         av = res["avoid"]
         lines.append(f"Sebaiknya hindari {av['range']} (skor {av['score']}): {av['whyLow']}.")
-    lines.append(f"{res['method']} Skor 100 = pilihan terbaik dalam rentang yang dinilai. Durasi {res['duration']} hari; persiapan minimal H-{res['leadDays']}.")
+    mech_l = f" untuk {E.MECHANISMS[ctx['mechanism']].lower()}" if ctx.get("mechanism") in E.MECHANISMS else ""
+    if ctx.get("durationAuto"):
+        dl = f"Durasi yang saya sarankan{mech_l}: **{adv['rec']} hari** (rentang wajar {adv['min']}–{adv['max']} hari)."
+    elif adv["status"] == "pas":
+        dl = f"Durasi {res['duration']} hari sudah pas{mech_l} (rentang wajar {adv['min']}–{adv['max']} hari)."
+    else:
+        dl = f"Durasi {res['duration']} hari **{adv['status']}**{mech_l}; saran saya **{adv['rec']} hari** (rentang {adv['min']}–{adv['max']} hari)."
+    lines.append(dl + " " + "; ".join(adv["reasons"]) + "." + (f" {adv['checkpoint']}." if adv.get("checkpoint") else ""))
+    lines.append(f"{res['method']} Skor 100 = pilihan terbaik dalam rentang yang dinilai. Persiapan minimal H-{res['leadDays']}.")
     if res.get("historyNote"):
         lines.append(res["historyNote"])
-    chips = [{"label": "7 hari", "set": {"duration": 7}}, {"label": "14 hari", "set": {"duration": 14}},
+    chips = ([] if ctx.get("durationAuto") or adv["status"] == "pas" else
+             [{"label": f"Pakai saran {adv['rec']} hari", "set": {"duration": adv["rec"]}}]) + [
+             {"label": "7 hari", "set": {"duration": 7}}, {"label": "14 hari", "set": {"duration": 14}},
              {"label": "30 hari", "set": {"duration": 30}}, {"label": "Bulan depan", "message": "bulan depan"},
              {"label": "Ganti objective", "set": {"objective": None}}, {"label": "Ganti channel", "set": {"platformProfileId": None}}]
     return {"context": ctx, "reply": "\n\n".join(lines), "result": res, "chips": chips}
