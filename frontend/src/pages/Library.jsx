@@ -30,7 +30,7 @@ export default function Library({ st }) {
           <option value="">Semua platform</option>{st.profiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
       </div>
-      {!list.length && <Empty title="Belum ada promo" text="Promo yang disimpan dari kalkulator atau rekomendasi muncul di sini." action={<a href="#/hitung" className="btn-primary">Hitung promo</a>} />}
+      {!list.length && <Empty title="Belum ada promo" text="Promo yang disimpan dari kalkulator atau rekomendasi muncul di sini." action={st.user.isAdmin || st.user.perm !== "viewer" ? <a href="#/hitung" className="btn-primary">Hitung promo</a> : null} />}
       <div className="grid md:grid-cols-2 gap-3">
         {list.map((p, i) => {
           const entries = Object.entries(p.summary || {});
@@ -47,7 +47,7 @@ export default function Library({ st }) {
               {entries.map(([a, s]) => (
                 <div key={a} className="mt-2.5 rounded-2xl bg-cream/60 px-3 py-2">
                   <div className="flex justify-between text-[12px] font-semibold text-ink/60"><span>{a === "bandung" ? "Bandung Raya" : "Jabodetabek"}</span>
-                    <span className="num">{rp(s.listPrice)} → {rp(s.customerPays)} · CM {rp(s.cm)} ({pc(s.cmPct)})</span></div>
+                    <span className="num">{rp(s.listPrice)} → {rp(s.customerPays)}{s.cm != null ? ` · CM ${rp(s.cm)} (${pc(s.cmPct)})` : ` · hemat ${pc(s.discountPct, 0)}`}</span></div>
                   <div className="flex flex-wrap gap-3 mt-1 items-center">
                     <MiniBall title="Sehat" label={s.health.label} score={s.health.score} />
                     <MiniBall title="Margin" label={s.margin.label} score={s.margin.score} />
@@ -71,13 +71,13 @@ export default function Library({ st }) {
         )}
       </AnimatePresence>
       <Sheet open={cmp} onClose={() => setCmp(false)} title="Bandingkan promo" wide>
-        <Compare promos={st.promos.filter((p) => sel.includes(p.id))} profs={profs} />
+        <Compare promos={st.promos.filter((p) => sel.includes(p.id))} profs={profs} viewer={!st.user.isAdmin && st.user.perm === "viewer"} />
       </Sheet>
     </div>
   );
 }
 
-function Compare({ promos, profs }) {
+function Compare({ promos, profs, viewer }) {
   const cols = promos.flatMap((p) => Object.entries(p.summary || {}).slice(0, 1).map(([a, s]) => ({ p, a, s })));
   const rows = [
     ["Platform", (c) => profs[c.p.platformProfileId]?.label],
@@ -92,7 +92,7 @@ function Compare({ promos, profs }) {
     ["Skor Menarik", (c) => `${c.s.menarik.score} · ${c.s.menarik.label}`, (c) => c.s.menarik.score],
     ["Contribution Target", (c) => rp(c.s.targetContribution), (c) => c.s.targetContribution],
     ["Gate", (c) => c.s.gate],
-  ];
+  ].filter(([l]) => !viewer || !["CM per unit", "CM %", "Potongan platform", "Contribution Target"].includes(l));
   return (
     <div className="scroll-x">
       <table className="w-full min-w-[520px]">

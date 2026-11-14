@@ -85,6 +85,13 @@ function Main() {
     case "/settings": page = <Settings {...props} />; break;
     default: page = <Home {...props} />;
   }
+  const viewer = !st.user.isAdmin && st.user.perm === "viewer";
+  const HIDE = viewer ? ["/hitung", "/rekomendasi", "/settings"] : [];
+  const nav = NAV.filter((n) => !HIDE.includes(n.to));
+  const moreNav = MORE.filter((n) => !HIDE.includes(n.to));
+  if (viewer && ["/hitung", "/rekomendasi"].includes(path)) {
+    page = <div className="card p-6 text-[15px]">Halaman ini hanya untuk tim yang menghitung promo. Sebagai Viewer, Anda bisa melihat promo di Library dan Kalender.</div>;
+  }
   const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo"));
 
   return (
@@ -99,7 +106,7 @@ function Main() {
             </div>
           </a>
           <nav className="hidden lg:flex ml-4 gap-0.5">
-            {[...NAV, ...MORE].map((n) => (
+            {[...nav, ...moreNav].map((n) => (
               <a key={n.to} href={`#${n.to}`} className={`relative px-2.5 py-1.5 rounded-full text-[13.5px] font-semibold whitespace-nowrap ${active(n.to) ? "text-bata" : "text-cream/85 hover:text-cream"}`}>
                 {active(n.to) && <motion.span layoutId="navpill" className="absolute inset-0 rounded-full bg-cream" transition={{ type: "spring", stiffness: 400, damping: 30 }} />}
                 <span className="relative">{n.short || n.label}</span>
@@ -136,8 +143,8 @@ function Main() {
       </AnimatePresence>
 
       <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-paper border-t border-line safe-b">
-        <div className="grid grid-cols-6">
-          {NAV.map((n) => {
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${nav.length + 1}, minmax(0, 1fr))` }}>
+          {nav.map((n) => {
             const I = n.icon; const on = active(n.to);
             return (
               <a key={n.to} href={`#${n.to}`} className={`relative flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] font-semibold ${on ? "text-bata" : "text-ink/60"}`}>
@@ -146,14 +153,14 @@ function Main() {
               </a>
             );
           })}
-          <button onClick={() => setMore(true)} className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] font-semibold ${MORE.some((m) => active(m.to)) ? "text-bata" : "text-ink/60"}`}>
+          <button onClick={() => setMore(true)} className={`flex flex-col items-center justify-center gap-0.5 h-14 text-[10px] font-semibold ${moreNav.some((m) => active(m.to)) ? "text-bata" : "text-ink/60"}`}>
             <MoreHorizontal size={21} />Lainnya
           </button>
         </div>
       </nav>
       <Sheet open={more} onClose={() => setMore(false)} title={`Halo, ${st.user.name}`}>
         <div className="grid gap-2">
-          {MORE.map((m) => { const I = m.icon; return (
+          {moreNav.map((m) => { const I = m.icon; return (
             <a key={m.to} href={`#${m.to}`} onClick={() => setMore(false)} className="card px-4 h-14 flex items-center gap-3 font-semibold"><I size={20} className="text-bata" />{m.label}</a>
           ); })}
           <button onClick={logout} className="card px-4 h-14 flex items-center gap-3 font-semibold text-bata"><LogOut size={20} />Logout</button>

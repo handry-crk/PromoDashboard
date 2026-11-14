@@ -55,8 +55,8 @@ export default function Home({ st, reload }) {
             <p className="text-[20px] md:text-[24px] font-bold leading-snug mt-1">{takeaway}</p>
           </div>
           <div className="flex flex-wrap gap-2 mt-4 md:mt-0 shrink-0">
-            <a href="#/hitung" className="btn-primary"><Calculator size={18} />Hitung promo</a>
-            <a href="#/rekomendasi" className="btn-ghost"><Sparkles size={18} />Cari rekomendasi</a>
+            {!(!st.user.isAdmin && st.user.perm === "viewer") && <a href="#/hitung" className="btn-primary"><Calculator size={18} />Hitung promo</a>}
+            {!(!st.user.isAdmin && st.user.perm === "viewer") && <a href="#/rekomendasi" className="btn-ghost"><Sparkles size={18} />Cari rekomendasi</a>}
             <a href="#/kalender" className="btn-soft"><CalendarDays size={18} />Kalender</a>
           </div>
         </div>
@@ -67,7 +67,7 @@ export default function Home({ st, reload }) {
         <Stat label="Rata-rata skor Sehat" value={avgHealth ?? "–"} tone={avgHealth >= 75 ? "ok" : avgHealth >= 50 ? "warn" : "bad"} />
         <Stat label="Promo Star" value={stars} tone="ok" />
         <Stat label="Margin Trap" value={traps} tone="bad" />
-        <Stat label="Contribution bulan ini" value={contrib} format={(v) => rpShort(v)} sub="dari hasil aktual" />
+        {!(!st.user.isAdmin && st.user.perm === "viewer") && <Stat label="Contribution bulan ini" value={contrib} format={(v) => rpShort(v)} sub="dari hasil aktual" />}
         <Stat label="Menunggu approval" value={pending.length} tone="warn" sub={unverified ? `${unverified} platform belum divalidasi` : null} />
       </div>
 

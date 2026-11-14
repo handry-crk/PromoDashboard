@@ -204,6 +204,46 @@ def require(*roles):
     return dep
 
 
+def is_viewer(user: dict) -> bool:
+    return not user.get("isAdmin") and user.get("perm") == "viewer"
+
+
+def no_viewer(user=Depends(current_user)):
+    if is_viewer(user):
+        err(403, "Viewer tidak punya akses ke perhitungan margin.")
+    return user
+
+
+SUMMARY_PUBLIC = ("listPrice", "customerPays", "discountTotal", "discountPct", "health", "margin", "menarik", "quadrant", "gate",
+                  "targetUnits", "targetTakeRate")
+
+
+def redact_summary(sm: dict) -> dict:
+    out = {}
+    for a, x in (sm or {}).items():
+        y = {k: x.get(k) for k in SUMMARY_PUBLIC if k in x}
+        y["takeaway"] = f"Sehat: {x['health']['label']} · Margin: {x['margin']['label']} · Menarik: {x['menarik']['label']}."
+        out[a] = y
+    return out
+
+
+def redact_results(res: dict) -> dict:
+    out = {}
+    for a, o in (res or {}).items():
+        u = o["unit"]
+        out[a] = {"area": a, "platformLabel": o.get("platformLabel"), "channelType": o.get("channelType"), "mechanism": o.get("mechanism"),
+                  "unit": None, "redacted": True,
+                  "price": {"listPrice": u["listPrice"], "customerPays": u["customerPays"], "discountTotal": u["discountTotal"],
+                            "discountPct": u["discountPct"]},
+                  "health": {"score": o["health"]["score"], "label": o["health"]["label"], "components": [], "hardFails": []},
+                  "margin": {"score": o["margin"]["score"], "label": o["margin"]["label"]},
+                  "menarik": {"score": o["menarik"]["score"], "label": o["menarik"]["label"], "components": []},
+                  "quadrant": o["quadrant"], "gate": {"status": o["gate"]["status"], "conditions": []},
+                  "takeaway": f"Sehat: {o['health']['label']} · Margin: {o['margin']['label']} · Menarik: {o['menarik']['label']}.",
+                  "durationAdvice": o.get("durationAdvice")}
+    return out
+
+
 def log_promo(pid, user, action, note=""):
     db.promo_logs.insert_one({"promoId": pid, "at": now_iso(), "byId": user["id"], "byName": user["name"],
                               "action": action, "note": note})
@@ -532,6 +572,12 @@ def promo_view(p):
 def state(user=Depends(current_user)):
     s = get_settings()
     promos = [promo_view(p) for p in db.promos.find({}).sort("createdAt", -1)]
+    viewer = is_viewer(user)
+    if viewer:
+        for p in promos:
+            p["summary"] = redact_summary(p.get("summary"))
+            if p.get("actual"):
+                p["actual"] = {k: v for k, v in p["actual"].items() if k not in ("contribution", "platformFees", "merchantDiscount")}
     members = []
     if user.get("isAdmin"):
         members = [{**{k: v for k, v in clean(m).items() if k != "pinHash"}, "status": m.get("status", "approved")}
@@ -540,7 +586,8 @@ def state(user=Depends(current_user)):
     if not (user.get("isAdmin") or user.get("perm") == "head"):
         ps_.pop("shareToken", None)
     return {"user": user, "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN, "settings": ps_,
-            "products": [enrich_product(p, s) for p in products_map().values()],
+            "products": [({k: v for k, v in enrich_product(p, s).items() if k not in ("hpp", "hppBreakdown", "gmPct")} if viewer
+                          else enrich_product(p, s)) for p in products_map().values()],
             "profiles": list(profiles_map().values()), "promos": promos, "members": members,
             "mechanisms": E.MECHANISMS, "objectives": E.OBJECTIVES, "empty": db.products.count_documents({}) == 0}
 
@@ -550,13 +597,13 @@ def state(user=Depends(current_user)):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/calc")
-def api_calc(body: dict, user=Depends(current_user)):
+def api_calc(body: dict, user=Depends(no_viewer)):
     promo = body.get("promo") or body
     return {"results": compute(promo, body.get("areas"))}
 
 
 @app.post("/api/calc/compare-platforms")
-def api_compare(body: dict, user=Depends(current_user)):
+def api_compare(body: dict, user=Depends(no_viewer)):
     promo = body.get("promo") or {}
     area = body.get("area") or (promo.get("areas") or ["bandung"])[0]
     s = get_settings()
@@ -593,7 +640,7 @@ def api_compare(body: dict, user=Depends(current_user)):
 
 
 @app.post("/api/calc/settlement")
-def api_settlement(body: dict, user=Depends(current_user)):
+def api_settlement(body: dict, user=Depends(no_viewer)):
     prof = profiles_map().get(body.get("profileId"))
     if not prof:
         err(400, "Pilih profil platform.")
@@ -624,7 +671,7 @@ def api_settlement(body: dict, user=Depends(current_user)):
 
 
 @app.post("/api/recommend")
-def api_recommend(body: dict, user=Depends(current_user)):
+def api_recommend(body: dict, user=Depends(no_viewer)):
     s = get_settings()
     prof = profiles_map().get(body.get("platformProfileId"))
     if not prof:
@@ -662,6 +709,14 @@ def get_promo(pid: str, user=Depends(current_user)):
     v = promo_view(p)
     v["results"] = clean(p).get("results")
     v["targets"] = aggregate_targets(p.get("summary") or {})
+    if is_viewer(user):
+        v["results"] = redact_results(v["results"])
+        v["summary"] = redact_summary(v.get("summary"))
+        v["targets"] = {k: v["targets"].get(k) for k in ("targetUnits", "targetTakeRate")}
+        if v.get("actual"):
+            v["actual"] = {k: x for k, x in v["actual"].items() if k not in ("contribution", "platformFees", "merchantDiscount")}
+            if v["actual"].get("achievementDetail"):
+                v["actual"]["achievementDetail"] = {k: x for k, x in v["actual"]["achievementDetail"].items() if k != "contribution"}
     v["timeline"] = clean(list(db.promo_logs.find({"promoId": pid}).sort("at", 1)))
     v["comments"] = clean(list(db.comments.find({"promoId": pid}).sort("at", 1)))
     pv = (get_settings().get("priceVersion") or 1)
@@ -839,7 +894,7 @@ def bump_price_version(user, note):
 
 
 @app.get("/api/price-versions")
-def price_versions(user=Depends(current_user)):
+def price_versions(user=Depends(no_viewer)):
     return [{"version": x["version"], "at": x["at"], "by": x["by"], "note": x["note"]}
             for x in db.price_versions.find({}).sort("version", -1)]
 

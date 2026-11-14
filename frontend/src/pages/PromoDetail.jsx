@@ -108,7 +108,13 @@ export default function PromoDetail({ st, reload, id }) {
             <p className="mt-3 text-[15px]">{o.takeaway}</p>
             {!!o.gate.conditions.length && <ul className="mt-2 text-[13px] text-ink/70 space-y-1">{o.gate.conditions.map((c) => <li key={c}>● {c}</li>)}</ul>}
           </section>
-          <section className="card p-4"><div className="font-extrabold mb-2">Unit economics</div><Waterfall unit={o.unit} /></section>
+          {o.unit ? <section className="card p-4"><div className="font-extrabold mb-2">Unit economics</div><Waterfall unit={o.unit} /></section>
+            : <section className="card p-4">
+                <div className="font-extrabold mb-2">Harga promo</div>
+                <div className="text-[15px] num">Harga normal <b>{rp(o.price.listPrice)}</b> → harga promo <b>{rp(o.price.customerPays)}</b></div>
+                <div className="text-[14px] text-ink/70 num">Customer hemat {rp(o.price.discountTotal)} ({pc(o.price.discountPct, 0)})</div>
+                <p className="text-[12px] text-ink/55 mt-2">Rincian HPP dan margin hanya untuk tim promo, Finance, dan Marketing Manager.</p>
+              </section>}
         </div>
       )}
 
@@ -120,7 +126,8 @@ export default function PromoDetail({ st, reload, id }) {
           {ad && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               {[["Unit", sm?.targetUnits, p.actual.units, ad.units], ["Tambahan revenue", sm?.targetIncRevenue, p.actual.incRevenue, ad.incRevenue, true],
-                ["Take rate", sm?.targetTakeRate, p.actual.takeRate, ad.takeRate, false, "%"], ["Contribution", sm?.targetContribution, p.actual.contribution, ad.contribution, true]].map(([l, t, a, r, money, suf]) => (
+                ["Take rate", sm?.targetTakeRate, p.actual.takeRate, ad.takeRate, false, "%"], ["Contribution", sm?.targetContribution, p.actual.contribution, ad.contribution, true]]
+                .filter(([l]) => u.isAdmin || u.perm !== "viewer" || !["Tambahan revenue", "Contribution"].includes(l)).map(([l, t, a, r, money, suf]) => (
                 <div key={l} className="rounded-2xl bg-cream/70 p-3">
                   <div className="text-[12px] font-semibold text-ink/60">{l}</div>
                   <div className="text-[13px] num">Target {money ? rp(t) : `${num(t)}${suf || ""}`}</div>

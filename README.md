@@ -45,7 +45,7 @@ pytest -q backend/tests                    # jalankan dari folder backend
 | Promo Planner | Hitung, simpan, ajukan, isi hasil aktual |
 | Finance | Ubah HPP/harga dan profil biaya platform, review margin |
 | Channel PIC | Ubah profil platform yang dia pegang, buat promo channel-nya |
-| Viewer | Lihat dan komentar |
+| Viewer | Lihat promo (harga, label skor, status, jadwal) dan komentar. Tidak menerima HPP, CM/GM, contribution, atau rincian potongan; kalkulator dan rekomendasi tertutup |
 
 ## Catatan
 - Biaya platform bawaan adalah asumsi publik per Nov 2026 dan ditandai "Belum divalidasi". Selama belum divalidasi, Gate maksimal **GO WITH CONDITION**.

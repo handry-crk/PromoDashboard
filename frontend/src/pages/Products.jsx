@@ -36,9 +36,9 @@ export default function Products({ st, reload }) {
 
   return (
     <div>
-      <Title a="Produk" b="& HPP" sub={`Acuan Price Structure · versi ${st.settings.priceVersion || 1}`}
+      <Title a="Produk" b={canEdit || st.products[0]?.hpp != null ? "& HPP" : "& harga"} sub={`Acuan Price Structure · versi ${st.settings.priceVersion || 1}`}
         right={<div className="flex flex-wrap gap-2">
-          <button className="btn-soft" onClick={() => setHist("load")}><History size={16} /><span className="hidden sm:inline">Riwayat</span></button>
+          {st.products[0]?.hpp != null && <button className="btn-soft" onClick={() => setHist("load")}><History size={16} /><span className="hidden sm:inline">Riwayat</span></button>}
           {canEdit && <a className="btn-soft" href={`/api/export/products.csv?token=${getToken()}`}><Download size={16} /><span className="hidden sm:inline">Export</span></a>}
           {canEdit && <label className="btn-soft cursor-pointer"><Upload size={16} /><span className="hidden sm:inline">Import CSV</span><input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files[0] && importCsv(e.target.files[0])} /></label>}
           {canEdit && <button className="btn-primary" onClick={() => setEdit({ isNew: true, nama: "", kategori: "reguler", hpp: "", prices: {}, channels: ["kios"] })}><Plus size={16} />Produk</button>}
@@ -55,14 +55,14 @@ export default function Products({ st, reload }) {
                     <div className="font-bold leading-snug">{p.nama}</div>
                     {canEdit && <button aria-label={`Edit ${p.nama}`} className="w-9 h-9 rounded-full hover:bg-blush flex items-center justify-center shrink-0" onClick={() => setEdit(JSON.parse(JSON.stringify(p)))}><Pencil size={15} /></button>}
                   </div>
-                  <div className="text-[13px] text-ink/65 num">HPP {rp(p.hpp)} · Bdg {rp(p.prices?.bandung)} · Jkt {rp(p.prices?.jakarta)}</div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="text-[13px] text-ink/65 num">{p.hpp != null ? `HPP ${rp(p.hpp)} · ` : ""}Bdg {rp(p.prices?.bandung)} · Jkt {rp(p.prices?.jakarta)}</div>
+                  {p.gmPct != null && <div className="flex items-center gap-2 mt-2">
                     <div className="flex-1 h-2.5 rounded-full bg-cream overflow-hidden">
                       <motion.div className="h-full rounded-full" style={{ background: p.amanDiskon ? "#2F6B4A" : p.hindariGratis ? "#B42F27" : "#B8741A" }}
                         initial={{ width: 0 }} animate={{ width: `${p.gmPct}%` }} transition={{ delay: 0.1 + i * 0.02, type: "spring", stiffness: 80 }} />
                     </div>
                     <span className="text-[13px] font-extrabold num w-12 text-right">{p.gmPct.toLocaleString("id-ID")}%</span>
-                  </div>
+                  </div>}
                   <div className="mt-1.5 flex flex-wrap gap-1">
                     {p.amanDiskon && <span className="pill border-ok text-ok">Aman diskon</span>}
                     {p.hindariGratis && <span className="pill">Hindari gratis</span>}

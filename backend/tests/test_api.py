@@ -171,3 +171,36 @@ def test_audit2_guards():
     c.post(f"/api/members/{vid}/approve", headers=H(ha), json={"decision": "approve"})
     tv = c.post("/api/auth/login", json={"identifier": "Vi", "pin": "1234"}).json()["token"]
     assert "shareToken" not in c.get("/api/state", headers=H(tv)).json()["settings"]
+
+
+def test_viewer_never_gets_hpp():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    tok = c.post("/api/invites", headers=H(ha), json={"role": "viewer"}).json()["token"]
+    c.post("/api/auth/register", json={"name": "Vi", "pin": "1234", "email": "vi@citarasakuliner.com", "invite": tok})
+    vid = next(m["id"] for m in c.get("/api/state", headers=H(ha)).json()["members"] if m["name"] == "Vi")
+    c.post(f"/api/members/{vid}/approve", headers=H(ha), json={"decision": "approve"})
+    tv = c.post("/api/auth/login", json={"identifier": "Vi", "pin": "1234"}).json()["token"]
+    import json as _j
+    banned = ('"hpp"', '"cm"', '"cmPct"', '"gmPct"', '"grossProfit"', '"normalCM"', '"merchantNet"', '"targetContribution"',
+              '"targetIncCM"', '"contribution"', '"hppBreakdown"', '"feeLines"')
+    for path in ("/api/state", "/api/promos/PR-2611-01", "/api/calendar?start=2026-11-01&end=2026-12-31"):
+        r = c.get(path, headers=H(tv))
+        assert r.status_code == 200
+        txt = _j.dumps(r.json())
+        for b in banned:
+            assert b not in txt, (path, b)
+        assert "15084" not in txt and "11916" not in txt  # HPP & CM Mozza Duo
+    promo = {"mechanism": "diskon_persen", "platformProfileId": "offline_kios", "items": [{"productId": "ayam-b"}], "params": {"discountPct": 10}}
+    assert c.post("/api/calc", headers=H(tv), json={"promo": promo}).status_code == 403
+    assert c.post("/api/calc/compare-platforms", headers=H(tv), json={"promo": promo}).status_code == 403
+    assert c.post("/api/recommend", headers=H(tv), json={"platformProfileId": "offline_kios"}).status_code == 403
+    assert c.post("/api/calc/settlement", headers=H(tv), json={"profileId": "gofood"}).status_code == 403
+    assert c.get("/api/price-versions", headers=H(tv)).status_code == 403
+    assert c.get("/api/export/products.csv", headers=H(tv)).status_code == 403
+    r = c.post("/api/promos/PR-2611-01/comments", headers=H(tv), json={"text": "ok"})
+    assert r.status_code == 200 and '"hpp"' not in _j.dumps(r.json())
+    # manager still sees everything
+    assert '"hpp"' in _j.dumps(c.get("/api/promos/PR-2611-01", headers=H(ha)).json())
