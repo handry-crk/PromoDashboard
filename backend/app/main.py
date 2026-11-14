@@ -285,6 +285,15 @@ def compute(promo, areas=None):
     if not prof:
         err(400, "Pilih platform/channel promo dulu.")
     areas = areas or promo.get("areas") or ["bandung"]
+    if prof.get("channelType") == "event":
+        areas = areas[:1]  # satu event = satu lokasi; mencegah event dihitung dua kali
+    ps, pe = promo.get("periodStart"), promo.get("periodEnd")
+    if ps and pe:
+        try:
+            if date.fromisoformat(pe) < date.fromisoformat(ps):
+                err(400, "Tanggal selesai harus sama atau setelah tanggal mulai.")
+        except ValueError:
+            err(400, "Format tanggal promo tidak valid.")
     hist = history_list()
     per = area_inputs(promo, areas, s, prof["id"])
     out = {}
@@ -527,7 +536,10 @@ def state(user=Depends(current_user)):
     if user.get("isAdmin"):
         members = [{**{k: v for k, v in clean(m).items() if k != "pinHash"}, "status": m.get("status", "approved")}
                    for m in db.members.find({"hidden": {"$ne": True}, "status": {"$ne": "rejected"}})]
-    return {"user": user, "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN, "settings": public_settings(s),
+    ps_ = public_settings(s)
+    if not (user.get("isAdmin") or user.get("perm") == "head"):
+        ps_.pop("shareToken", None)
+    return {"user": user, "roles": ROLES, "slots": slot_status(), "emailDomain": EMAIL_DOMAIN, "settings": ps_,
             "products": [enrich_product(p, s) for p in products_map().values()],
             "profiles": list(profiles_map().values()), "promos": promos, "members": members,
             "mechanisms": E.MECHANISMS, "objectives": E.OBJECTIVES, "empty": db.products.count_documents({}) == 0}
@@ -984,6 +996,24 @@ def put_baselines(body: dict, user=Depends(require("head", "finance"))):
 @app.put("/api/members/{mid}")
 def put_member(mid: str, body: dict, user=Depends(require("head"))):
     upd = {k: body[k] for k in ("role", "active", "platforms", "email", "phone") if k in body}
+    target = db.members.find_one({"id": mid})
+    if not target:
+        err(404, "Anggota tidak ditemukan.")
+    if "role" in upd and upd["role"] not in ROLES:
+        err(400, "Role tidak dikenal.")
+    losing = (upd.get("active") is False) or ("role" in upd and upd["role"] != "head")
+    if losing and (target.get("isAdmin") or target.get("role") == "head"):
+        if mid == user["id"]:
+            err(400, "Anda tidak bisa menonaktifkan atau menurunkan role akun sendiri.")
+        others = db.members.count_documents({"id": {"$ne": mid}, "active": {"$ne": False}, "hidden": {"$ne": True},
+                                             "status": {"$nin": ["pending", "rejected"]},
+                                             "$or": [{"isAdmin": True}, {"role": "head"}]})
+        if others == 0:
+            err(400, "Harus ada minimal satu Marketing Manager aktif.")
+    if "role" in upd and upd["role"] in SIGNUP_SLOTS and target.get("role") != upd["role"]:
+        slot = next(x for x in slot_status() if x["role"] == upd["role"])
+        if not slot["open"]:
+            err(400, f"Slot {slot['label']} sudah terisi.")
     db.members.update_one({"id": mid}, {"$set": upd})
     return {"ok": True}
 
@@ -1110,6 +1140,8 @@ def calendar(start: str = "", end: str = "", user=Depends(current_user)):
         de = date.fromisoformat(end) if end else ds.replace(day=28)
     except ValueError:
         err(400, "Format tanggal harus YYYY-MM-DD.")
+    if de < ds:
+        ds, de = de, ds
     if (de - ds).days > 400:
         err(400, "Rentang kalender maksimal 400 hari.")
     s = get_settings()
@@ -1245,7 +1277,46 @@ def pct_of(u: dict) -> float:
     return (u.get("perceivedSaving", u.get("discountTotal", 0)) / u["listPrice"] * 100) if u.get("listPrice") else 0
 
 
+def clean_ctx(ctx: dict) -> dict:
+    """Drop or coerce anything that is not a valid timing input so bad values never crash the bot."""
+    out = dict(ctx or {})
+    for k in ("from", "to", "checkStart", "checkEnd"):
+        if out.get(k) is not None:
+            try:
+                date.fromisoformat(str(out[k]))
+            except ValueError:
+                out.pop(k)
+    if out.get("from") and out.get("to") and out["from"] > out["to"]:
+        out["from"], out["to"] = out["to"], out["from"]
+    if out.get("checkStart") and out.get("checkEnd") and out["checkEnd"] < out["checkStart"]:
+        out.pop("checkEnd")
+    if out.get("duration") is not None:
+        try:
+            out["duration"] = max(1, min(int(float(out["duration"])), 60))
+        except (TypeError, ValueError):
+            out.pop("duration")
+    if out.get("objective") not in T.OBJ_LABEL:
+        out.pop("objective", None)
+    for k in ("products", "areas"):
+        if out.get(k) is not None and not isinstance(out[k], list):
+            out.pop(k)
+    if out.get("areas"):
+        out["areas"] = [a for a in out["areas"] if a in ("bandung", "jakarta")] or None
+        if not out["areas"]:
+            out.pop("areas")
+    for k in ("discountPct", "stampN"):
+        if out.get(k) is not None:
+            try:
+                out[k] = float(out[k])
+            except (TypeError, ValueError):
+                out.pop(k)
+    if out.get("mechanism") not in E.MECHANISMS:
+        out.pop("mechanism", None)
+    return out
+
+
 def run_timing(ctx: dict):
+    ctx = clean_ctx(ctx)
     profs = profiles_map()
     prof = profs.get(ctx.get("platformProfileId"))
     if not prof:
@@ -1306,6 +1377,9 @@ def api_bot(body: dict, user=Depends(current_user)):
                 ctx.pop(k, None)
             else:
                 ctx[k] = v
+    ctx = clean_ctx(ctx)
+    if ctx.get("platformProfileId") not in profs:
+        ctx.pop("platformProfileId", None)
     need = T.missing(ctx)
     if need:
         if "platform" in need:
@@ -1380,6 +1454,8 @@ def add_moment(body: dict, user=Depends(require("head", "planner", "finance"))):
             date.fromisoformat(body["end"])
     except ValueError:
         err(400, "Isi tanggal momen dengan benar.")
+    if body.get("end") and body["end"] < body["date"]:
+        err(400, "Tanggal selesai momen harus setelah tanggal mulai.")
     if not (body.get("label") or "").strip():
         err(400, "Isi nama momen.")
     mo = {"id": secrets.token_hex(4), "date": body["date"], "end": body.get("end") or None, "label": body["label"].strip()[:60],

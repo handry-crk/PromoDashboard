@@ -29,7 +29,9 @@ def fmt(d: date) -> str:
 
 
 def fmt_range(a: date, b: date) -> str:
-    if a.month == b.month:
+    if a == b:
+        return f"{a.day} {BULAN[a.month - 1][:3]} {a.year}"
+    if a.month == b.month and a.year == b.year:
         return f"{a.day}–{b.day} {BULAN[a.month - 1][:3]} {a.year}"
     return f"{fmt(a)} – {fmt(b)} {b.year}"
 

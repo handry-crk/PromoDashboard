@@ -216,7 +216,7 @@ export default function Assistant({ st }) {
       </div>
 
       <form onSubmit={(e) => { e.preventDefault(); if (text.trim()) { ask({ message: text.trim() }); setText(""); } }}
-        className="sticky bottom-20 md:bottom-4 flex gap-2 bg-cream/90 backdrop-blur py-2">
+        className="sticky bottom-20 lg:bottom-4 flex gap-2 bg-cream/90 backdrop-blur py-2">
         <input className="field !rounded-full" placeholder="Tanya, mis. kapan promo GoFood 2 minggu bulan depan?" value={text} onChange={(e) => setText(e.target.value)} aria-label="Pertanyaan" />
         <button className="btn-primary !px-4" disabled={busy || !text.trim()} aria-label="Kirim"><Send size={18} /></button>
       </form>

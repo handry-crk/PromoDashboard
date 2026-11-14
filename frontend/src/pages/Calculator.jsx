@@ -196,11 +196,11 @@ export default function Calculator({ st, reload, promoId }) {
   };
 
   return (
-    <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] gap-5 items-start">
+    <div className="grid grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] gap-5 items-start">
       {/* mobile sticky score strip */}
       <div className="lg:hidden sticky top-14 z-30 -mx-4 px-4 py-2 bg-cream/95 backdrop-blur border-b border-line">
         {o ? (
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <MiniBall title="Sehat" label={o.health.label} score={o.health.score} />
             <MiniBall title="Margin" label={o.margin.label} score={o.margin.score} />
             <MiniBall title="Menarik" label={o.menarik.label} score={o.menarik.score} />
@@ -232,6 +232,7 @@ export default function Calculator({ st, reload, promoId }) {
                       mechanism: np.channelType === "offline" && ONLINE_ONLY.includes(promo.mechanism) ? "diskon_persen" : promo.mechanism,
                       funding: np.channelType === "offline" ? { merchantPct: 100, platformPct: 0 } : promo.funding,
                       ...(np.channelType === "event" ? {
+                        areas: promo.areas.slice(0, 1),
                         fixedCosts: (promo.fixedCosts || []).length && promo.platformProfileId?.startsWith("event") ? promo.fixedCosts : (np.eventFixedTemplate || []).map((x) => ({ ...x })),
                         event: { ...(promo.event || {}) },
                         objective: ["aov", "online"].includes(promo.objective) ? "awareness" : promo.objective,
@@ -243,8 +244,11 @@ export default function Calculator({ st, reload, promoId }) {
             {prof && !prof.verified && <div className="text-[12px] text-warn font-semibold flex items-center gap-1"><Info size={14} />Biaya {prof.label} belum divalidasi — angka masih asumsi.</div>}
           </div>
           <div><span className="lbl">Area</span>
-            <Chips multi options={[["bandung", "Bandung Raya"], ["jakarta", "Jabodetabek"]]} value={promo.areas}
-              onChange={(v) => { if (!v.length) return; up({ areas: v }); if (!v.includes(area)) setArea(v[0]); }} /></div>
+            {ch === "event"
+              ? <Chips options={[["bandung", "Bandung Raya"], ["jakarta", "Jabodetabek"]]} value={promo.areas[0]} onChange={(v) => { up({ areas: [v] }); setArea(v); }} />
+              : <Chips multi options={[["bandung", "Bandung Raya"], ["jakarta", "Jabodetabek"]]} value={promo.areas}
+                onChange={(v) => { if (!v.length) return; up({ areas: v }); if (!v.includes(area)) setArea(v[0]); }} />}
+            {ch === "event" && <p className="text-[12px] text-ink/55 mt-1">Satu event dihitung untuk satu lokasi.</p>}</div>
         </Section>
 
         <Section title="Mekanisme & item">
@@ -448,7 +452,10 @@ export default function Calculator({ st, reload, promoId }) {
               const a = o.durationAdvice;
               const bad = a.status && a.status !== "pas";
               const span = Math.max(a.max, a.current || 0, 1) * 1.1;
-              const setDays = (n) => up({ periodEnd: new Date(new Date(promo.periodStart).getTime() + (n - 1) * 864e5).toISOString().slice(0, 10) });
+              const setDays = (n) => {
+                const base = promo.periodStart && !isNaN(new Date(promo.periodStart)) ? new Date(promo.periodStart) : new Date(Date.now() + 7 * 864e5);
+                up({ periodStart: base.toISOString().slice(0, 10), periodEnd: new Date(base.getTime() + (n - 1) * 864e5).toISOString().slice(0, 10) });
+              };
               return (
                 <section className={`card p-4 ${bad ? "border-warn" : ""}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">

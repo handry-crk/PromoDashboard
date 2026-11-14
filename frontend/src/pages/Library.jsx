@@ -65,7 +65,7 @@ export default function Library({ st }) {
       </div>
       <AnimatePresence>
         {sel.length > 1 && (
-          <motion.div initial={{ y: 80 }} animate={{ y: 0 }} exit={{ y: 80 }} className="fixed bottom-20 md:bottom-6 inset-x-0 z-40 flex justify-center px-4">
+          <motion.div initial={{ y: 80 }} animate={{ y: 0 }} exit={{ y: 80 }} className="fixed bottom-20 lg:bottom-6 inset-x-0 z-40 flex justify-center px-4">
             <button className="btn-primary shadow-xl" onClick={() => setCmp(true)}><Columns3 size={18} />Bandingkan {sel.length} promo</button>
           </motion.div>
         )}

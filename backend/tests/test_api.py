@@ -135,3 +135,39 @@ def test_calendar_conflicts_and_moments():
     assert any(m.get("custom") and m["label"] == "Anniversary CBAA" for m in r["moments"])
     c.delete(f"/api/moments/{mo['id']}", headers=H(ha))
     assert c.get("/api/calendar?start=2026-12-01&end=2028-12-31", headers=H(ha)).status_code == 400
+
+
+def test_audit2_guards():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "h@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    me = c.get("/api/state", headers=H(ha)).json()["user"]["id"]
+    # admin cannot lock himself out
+    assert c.put(f"/api/members/{me}", headers=H(ha), json={"active": False}).status_code == 400
+    assert c.put(f"/api/members/{me}", headers=H(ha), json={"role": "viewer"}).status_code == 400
+    assert c.get("/api/state", headers=H(ha)).status_code == 200
+    # bot never 500s on bad context
+    for ctx in ({"platformProfileId": "gofood", "objective": "aov", "to": "garbage"},
+                {"platformProfileId": "gofood", "objective": "aov", "duration": "abc"},
+                {"platformProfileId": "gofood", "objective": "zzz"}, {"platformProfileId": "nope"}):
+        assert c.post("/api/bot", headers=H(ha), json={"context": ctx}).status_code == 200
+    # event counted once even with two areas
+    st = c.get("/api/state", headers=H(ha)).json()
+    bz = next(p for p in st["profiles"] if p["id"] == "event_bazaar")
+    pr = {"mechanism": "bundle", "objective": "awareness", "platformProfileId": "event_bazaar", "params": {"packagePrice": 30000},
+          "items": [{"productId": "mozza-b"}, {"productId": "ayam-k"}], "fixedCosts": bz["eventFixedTemplate"], "areas": ["bandung", "jakarta"]}
+    res = c.post("/api/calc", headers=H(ha), json={"promo": pr}).json()["results"]
+    assert list(res) == ["bandung"] and res["bandung"]["scenarios"]["target"]["fixedCosts"] == 7050000
+    # end before start rejected
+    bad = {"mechanism": "diskon_persen", "platformProfileId": "offline_kios", "items": [{"productId": "ayam-b"}], "params": {"discountPct": 10},
+           "periodStart": "2026-12-10", "periodEnd": "2026-12-01"}
+    assert c.post("/api/calc", headers=H(ha), json={"promo": bad}).status_code == 400
+    assert c.post("/api/moments", headers=H(ha), json={"date": "2026-12-10", "end": "2026-12-01", "label": "X"}).status_code == 400
+    # viewer does not get the report token
+    tok = c.post("/api/invites", headers=H(ha), json={"role": "viewer"}).json()["token"]
+    c.post("/api/auth/register", json={"name": "Vi", "pin": "1234", "email": "vi@citarasakuliner.com", "invite": tok})
+    vid = next(m["id"] for m in c.get("/api/state", headers=H(ha)).json()["members"] if m["name"] == "Vi")
+    c.post(f"/api/members/{vid}/approve", headers=H(ha), json={"decision": "approve"})
+    tv = c.post("/api/auth/login", json={"identifier": "Vi", "pin": "1234"}).json()["token"]
+    assert "shareToken" not in c.get("/api/state", headers=H(tv)).json()["settings"]

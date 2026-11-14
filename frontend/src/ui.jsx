@@ -36,9 +36,9 @@ export function CimolBall({ score = 0, label = "", title, size = 104, hint }) {
   const fillY = 100 - level; // 0..100 viewbox
   const id = useRef(`c${Math.random().toString(36).slice(2, 8)}`).current;
   return (
-    <div className="flex flex-col items-center text-center" title={hint}>
+    <div className="flex flex-col items-center text-center min-w-0" title={hint}>
       <div className="text-[13px] font-bold text-ink/80 mb-1">{title}</div>
-      <motion.svg width={size} height={size} viewBox="0 0 100 100" className="drop-shadow-[0_6px_0_rgba(33,33,33,.08)]"
+      <motion.svg width={size} height={size} viewBox="0 0 100 100" style={{ maxWidth: "100%", height: "auto" }} className="drop-shadow-[0_6px_0_rgba(33,33,33,.08)]"
         animate={reduce ? {} : { y: [0, -3, 0] }} transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}>
         <defs>
           <clipPath id={id}><circle cx="50" cy="50" r="44" /></clipPath>
@@ -103,7 +103,7 @@ export function Badge({ label, big }) {
 
 export function Title({ a, b, sub, right }) {
   return (
-    <div className="flex items-end justify-between gap-3 mb-3">
+    <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
       <div>
         <h2 className="title"><b>{a}</b> {b}</h2>
         {sub && <div className="text-[13px] font-semibold text-ink/60 mt-0.5 inline-block border-b-2 border-bata/70 pb-0.5">{sub}</div>}

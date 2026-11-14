@@ -37,7 +37,7 @@ export default function Products({ st, reload }) {
   return (
     <div>
       <Title a="Produk" b="& HPP" sub={`Acuan Price Structure · versi ${st.settings.priceVersion || 1}`}
-        right={<div className="flex gap-2">
+        right={<div className="flex flex-wrap gap-2">
           <button className="btn-soft" onClick={() => setHist("load")}><History size={16} /><span className="hidden sm:inline">Riwayat</span></button>
           {canEdit && <a className="btn-soft" href={`/api/export/products.csv?token=${getToken()}`}><Download size={16} /><span className="hidden sm:inline">Export</span></a>}
           {canEdit && <label className="btn-soft cursor-pointer"><Upload size={16} /><span className="hidden sm:inline">Import CSV</span><input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files[0] && importCsv(e.target.files[0])} /></label>}
