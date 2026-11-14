@@ -347,10 +347,13 @@ def parse_message(text: str, ctx: dict, products: dict, profiles: dict, today: d
         if re.search(pat, t) and pid in profiles:
             out["platformProfileId"] = pid
             break
-    for pat, obj in OBJ_WORDS:
-        if re.search(pat, t):
-            out["objective"] = obj
-            break
+    found = list(dict.fromkeys(obj for pat, obj in OBJ_WORDS if re.search(pat, t)))
+    if found:
+        out["objective"] = found[0]
+        if len(found) > 1:
+            out["objective2"] = found[1]
+        elif out.get("objective2") == found[0]:
+            out.pop("objective2", None)
     m = re.search(r"(\d+)\s*(hari|minggu|bulan)", t)
     if m:
         n = int(m.group(1)) * {"hari": 1, "minggu": 7, "bulan": 30}[m.group(2)]

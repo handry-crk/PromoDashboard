@@ -92,6 +92,28 @@ def fit_level(settings: dict, objective: str, mechanism: str) -> str:
     return "tidak"
 
 
+FIT_PTS = {"cocok": 100, "bisa": 60}
+OBJ2_WEIGHT = 0.3   # bobot objective pendukung; objective utama 0,7
+
+
+def objective2_of(promo: dict):
+    o2 = promo.get("objective2")
+    return o2 if o2 in OBJECTIVES and o2 != promo.get("objective") else None
+
+
+def fit_blend(settings: dict, promo: dict, mechanism: str):
+    """Skor kecocokan mekanisme: objective utama 70%, pendukung 30% (bila ada)."""
+    f1 = fit_level(settings, promo.get("objective"), mechanism)
+    s1 = FIT_PTS.get(f1, 20)
+    note = f"{f1.title()} untuk {OBJECTIVES.get(promo.get('objective'), '-')}"
+    o2 = objective2_of(promo)
+    if not o2:
+        return f1, None, s1, note
+    f2 = fit_level(settings, o2, mechanism)
+    score = round((1 - OBJ2_WEIGHT) * s1 + OBJ2_WEIGHT * FIT_PTS.get(f2, 20))
+    return f1, f2, score, f"{note} (utama); {f2} untuk {OBJECTIVES[o2]} (pendukung)"
+
+
 # ---------------------------------------------------------------------------
 # prices
 # ---------------------------------------------------------------------------
@@ -824,8 +846,8 @@ def attract_score(promo, unit, u, settings, profile, mech, history):
     else:
         us, note = 70, f"Periode {days} hari"
     add("urgency", "Gratis / urgency", 10, us, note)
-    fl = fit_level(settings, promo.get("objective"), mech)
-    add("fit", "Fit objective", 10, {"cocok": 100, "bisa": 60}.get(fl, 20), f"{fl.title()} untuk {OBJECTIVES.get(promo.get('objective'), '-')}")
+    fl, fl2, fit_s, fit_note = fit_blend(settings, promo, mech)
+    add("fit", "Fit objective", 10, fit_s, fit_note)
     tw = sum(x["weight"] for x in comps)
     rule = sum(x["weight"] * x["score"] for x in comps) / tw
     calibrated = None
@@ -840,7 +862,7 @@ def attract_score(promo, unit, u, settings, profile, mech, history):
         final = 0.6 * rule + 0.4 * hist_score
         calibrated = len(hist)
     return {"score": round(final), "label": _label(final, 70, 50, ("Menarik", "Cukup", "Kurang")),
-            "components": comps, "calibratedFrom": calibrated, "fit": fl}
+            "components": comps, "calibratedFrom": calibrated, "fit": fl, "fit2": fl2, "fitScore": fit_s}
 
 
 def quad(h, m, a):
@@ -1082,6 +1104,9 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
     mechs_allowed = req.get("mechanisms") or (
         (settings.get("fit") or DEFAULT_FIT).get(objective, {}).get("cocok", []) +
         (settings.get("fit") or DEFAULT_FIT).get(objective, {}).get("bisa", []))
+    objective2 = req.get("objective2") if req.get("objective2") in OBJECTIVES and req.get("objective2") != objective else None
+    if objective2 and not req.get("mechanisms"):
+        mechs_allowed = list(dict.fromkeys(mechs_allowed + (settings.get("fit") or DEFAULT_FIT).get(objective2, {}).get("cocok", [])))
     if profile.get("channelType") == "offline":
         mechs_allowed = [m for m in mechs_allowed if m not in ONLINE_ONLY_MECHS]
     low = settings.get("lowMarginGm", 35)
@@ -1097,6 +1122,7 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                                          "trxPerOutletDay", "quotaPerOutletDay", "capacityPerOutletDay",
                                          "scenarioInputs", "fixedCosts", "trackingReady", "overrides", "event")}
     base_promo["objective"] = objective
+    base_promo["objective2"] = objective2
     cands: list[dict] = []
 
     def add(mech, its, params, nama):
@@ -1218,7 +1244,7 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                     continue
                 if budget and o["scenarios"]["target"]["investment"] > float(budget):
                     continue
-                fit_s = {"cocok": 100, "bisa": 60}.get(o["menarik"]["fit"], 20)
+                fit_s = o["menarik"].get("fitScore", FIT_PTS.get(o["menarik"]["fit"], 20))
                 base = (w["sehat"] * o["health"]["score"] + w["margin"] * o["margin"]["score"] +
                         w["menarik"] * o["menarik"]["score"] + w["fit"] * fit_s)
                 hs = hist_by.get((pr["mechanism"], profile["id"]))
@@ -1230,7 +1256,8 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                                                "effectiveTakeRate", "merchantDiscount", "platformDiscount", "platformFees")},
                     "health": {"score": o["health"]["score"], "label": o["health"]["label"]},
                     "margin": {"score": o["margin"]["score"], "label": o["margin"]["label"]},
-                    "menarik": {"score": o["menarik"]["score"], "label": o["menarik"]["label"]},
+                    "menarik": {"score": o["menarik"]["score"], "label": o["menarik"]["label"],
+                                "fit": o["menarik"].get("fit"), "fit2": o["menarik"].get("fit2")},
                     "quadrant": o["quadrant"], "gate": o["gate"]["status"],
                     "contribution": o["scenarios"]["target"]["contribution"], "roi": o["scenarios"]["target"]["roi"],
                     "takeaway": o["takeaway"]}})

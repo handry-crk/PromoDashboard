@@ -49,7 +49,7 @@ export default function PromoDetail({ st, reload, id }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-[13px] text-ink/60 font-semibold">{p.kode} · {prof?.label} · {st.mechanisms[p.mechanism]} · {st.objectives[p.objective]}</div>
+          <div className="text-[13px] text-ink/60 font-semibold">{p.kode} · {prof?.label} · {st.mechanisms[p.mechanism]} · {st.objectives[p.objective]}{p.objective2 ? ` + ${st.objectives[p.objective2]} (pendukung)` : ""}</div>
           <h2 className="text-[26px] font-extrabold leading-tight">{p.nama}</h2>
           <div className="text-[13px] text-ink/60">{fmtDate(p.periodStart)} – {fmtDate(p.periodEnd)} · dibuat {p.createdBy}</div>
         </div>

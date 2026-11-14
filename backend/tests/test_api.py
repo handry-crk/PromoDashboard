@@ -336,3 +336,33 @@ def test_run_now_from_recommendation():
     assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "startDate": "2020-01-01"}).status_code == 400
     assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "days": 500}).status_code == 400
     assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": {}}).status_code == 400
+
+
+def test_primary_and_supporting_objective():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    base = {"nama": "Tes Obj", "mechanism": "bundle", "platformProfileId": "offline_kios", "areas": ["bandung"], "objective": "repeat",
+            "periodStart": "2026-12-01", "periodEnd": "2026-12-14", "items": [{"productId": "mix-mozza-ayam", "qty": 2}], "params": {"discountPct": 10}}
+    fit = lambda p: next(x for x in p["results"]["bandung"]["menarik"]["components"] if x["key"] == "fit")
+    p1 = c.post("/api/promos", headers=H(ha), json=base).json()
+    p2 = c.post("/api/promos", headers=H(ha), json={**base, "objective2": "aov"}).json()
+    assert fit(p1)["score"] == 60                       # bundle: "bisa" untuk repeat
+    assert fit(p2)["score"] == round(0.7 * 60 + 0.3 * 100) and "pendukung" in fit(p2)["note"]
+    assert p2["objective2"] == "aov" and p1.get("objective2") is None
+    # same as primary or unknown → ignored
+    assert c.post("/api/promos", headers=H(ha), json={**base, "objective2": "repeat"}).json().get("objective2") is None
+    assert c.post("/api/promos", headers=H(ha), json={**base, "objective2": "ngawur"}).json().get("objective2") is None
+    # recommend carries it and widens mechanisms with the supporting objective's best-fit ones
+    r1 = c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_kios", "objective": "repeat", "area": "bandung"}).json()["results"]
+    r2 = c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_kios", "objective": "repeat", "objective2": "aov", "area": "bandung"}).json()["results"]
+    assert r2 and all(x["promo"]["objective2"] == "aov" and x["result"]["menarik"]["fit2"] for x in r2)
+    assert all(not x["promo"].get("objective2") for x in r1)
+    # bot reads two objectives from one sentence
+    b = c.post("/api/bot", headers=H(ha), json={"message": "kapan promo gofood untuk trial dan naikkan aov"}).json()
+    assert b["context"]["objective"] and b["context"].get("objective2") and b["context"]["objective"] != b["context"]["objective2"]
+    # learning data keeps it
+    l = c.post("/api/learnings", headers=H(ha), json={"nama": "Lama", "platformProfileId": "gofood", "mechanism": "bundle", "objective": "aov",
+               "objective2": "trial", "areas": ["jakarta"], "periodStart": "2026-08-01", "periodEnd": "2026-08-14", "rating": 4})
+    assert l.status_code == 200 and l.json()["objective2"] == "trial"

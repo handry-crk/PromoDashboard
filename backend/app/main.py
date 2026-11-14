@@ -320,6 +320,7 @@ def learning_records():
         out.append({"id": rid, "source": src, "nama": d.get("nama"), "platformProfileId": d.get("platformProfileId"),
                     "platformId": d.get("platformProfileId"), "platformLabel": prof.get("label", "?"),
                     "channelType": prof.get("channelType"), "mechanism": d.get("mechanism"), "objective": d.get("objective"),
+                    "objective2": d.get("objective2"),
                     "areas": d.get("areas") or [], "periodStart": ds.isoformat(), "periodEnd": de.isoformat(),
                     "takeRate": take, "upliftPct": uplift, "achievement": ach, "rating": rating, "perf": perf_of(ach, rating, uplift),
                     "note": note, "by": d.get("by") or d.get("createdBy"), **feat})
@@ -429,7 +430,7 @@ def summary_of(results):
     return sm
 
 
-PROMO_FIELDS = ["nama", "objective", "mechanism", "platformProfileId", "areas", "periodStart", "periodEnd", "outlets",
+PROMO_FIELDS = ["nama", "objective", "objective2", "mechanism", "platformProfileId", "areas", "periodStart", "periodEnd", "outlets",
                 "outletsLabel", "openRate", "trxPerOutletDay", "items", "params", "areaParams", "funding",
                 "programsJoined", "overrides", "maxPerTrx", "quotaPerOutletDay", "capacityPerOutletDay",
                 "variableCostPerUnit", "fixedCosts", "segmentMix", "scenarioInputs", "strategic", "trackingReady",
@@ -794,6 +795,7 @@ def get_promo(pid: str, user=Depends(current_user)):
 
 
 def save_results(doc):
+    doc["objective2"] = E.objective2_of(doc)
     res = compute(doc)
     doc["results"] = res
     doc["summary"] = summary_of(res)
@@ -1675,6 +1677,8 @@ def clean_ctx(ctx: dict) -> dict:
             out.pop("duration")
     if out.get("objective") not in T.OBJ_LABEL:
         out.pop("objective", None)
+    if out.get("objective2") not in T.OBJ_LABEL or out.get("objective2") == out.get("objective"):
+        out.pop("objective2", None)
     for k in ("products", "areas"):
         if out.get(k) is not None and not isinstance(out[k], list):
             out.pop(k)
@@ -1721,7 +1725,7 @@ def ctx_from_promo(pid: str) -> dict:
         dur = (date.fromisoformat(p["periodEnd"]) - date.fromisoformat(p["periodStart"])).days + 1
     except Exception:
         dur = None
-    return {"platformProfileId": p.get("platformProfileId"), "objective": p.get("objective"), "areas": p.get("areas"),
+    return {"platformProfileId": p.get("platformProfileId"), "objective": p.get("objective"), "objective2": p.get("objective2"), "areas": p.get("areas"),
             "products": sorted({i.get("productId") for i in p.get("items") or [] if i.get("productId")}),
             "duration": dur, "excludeId": p["id"], "promoName": p.get("nama"), "mechanism": p.get("mechanism"),
             "discountPct": round((next(iter((p.get("summary") or {}).values()), {}).get("discountPct") or 0) * 100, 1),
@@ -1795,7 +1799,8 @@ def api_bot(body: dict, user=Depends(current_user)):
             lines.append(f"Ada pilihan lebih baik: **{best['range']}** (skor {best['score']}).")
     else:
         best = res["recommendations"][0]
-        lines.append(f"Untuk {T.OBJ_LABEL.get(res['objective'], res['objective'])} di {res['platformLabel']}{who}, waktu terbaik "
+        o2 = f" (pendukung: {T.OBJ_LABEL[ctx['objective2']]})" if ctx.get("objective2") else ""
+        lines.append(f"Untuk {T.OBJ_LABEL.get(res['objective'], res['objective'])}{o2} di {res['platformLabel']}{who}, waktu terbaik "
                      f"**{best['range']}** (mulai {best['startDay']}), skor **{best['score']}/100**.")
         lines.append("Alasannya: " + "; ".join(best["reasons"]) + ".")
         if best["cautions"]:
@@ -1818,7 +1823,7 @@ def api_bot(body: dict, user=Depends(current_user)):
         lines.append(res["historyNote"])
     recs_l = learning_records()
     sim = [r for r in recs_l if r["platformProfileId"] == ctx["platformProfileId"]
-           and (r["mechanism"] == ctx.get("mechanism") if ctx.get("mechanism") else r["objective"] == ctx.get("objective"))][:2]
+           and (r["mechanism"] == ctx.get("mechanism") if ctx.get("mechanism") else ctx.get("objective") in (r["objective"], r.get("objective2")))][:2]
     if sim:
         def how(r):
             if r["achievement"] is not None:
@@ -1839,7 +1844,7 @@ def api_bot(body: dict, user=Depends(current_user)):
     return {"context": ctx, "reply": "\n\n".join(lines), "result": res, "chips": chips}
 
 
-LEARN_FIELDS = ("nama", "platformProfileId", "mechanism", "objective", "areas", "periodStart", "periodEnd", "rating", "takeRate",
+LEARN_FIELDS = ("nama", "platformProfileId", "mechanism", "objective", "objective2", "areas", "periodStart", "periodEnd", "rating", "takeRate",
                 "upliftPct", "achievement", "note", "discountPct")
 
 
@@ -1853,6 +1858,7 @@ def clean_learning(body: dict, profs: dict) -> dict:
         raise ValueError("Pilih jenis promo.")
     if d["objective"] not in E.OBJECTIVES:
         d["objective"] = None
+    d["objective2"] = E.objective2_of(d) if d["objective"] else None
     try:
         ds, de = date.fromisoformat(str(d["periodStart"])), date.fromisoformat(str(d["periodEnd"]))
     except ValueError:
@@ -1958,6 +1964,7 @@ async def import_learnings(request: Request, user=Depends(require("head", "plann
         area = row.get("area", "").lower()
         body = {"nama": row.get("nama"), "platformProfileId": pid, "mechanism": mid,
                 "objective": obj if obj in E.OBJECTIVES else obj_by_label.get(obj),
+                "objective2": (lambda o: o if o in E.OBJECTIVES else obj_by_label.get(o))(row.get("tujuan_pendukung", "").lower()),
                 "areas": ["jakarta"] if "jak" in area or "jabo" in area else ["bandung"],
                 "periodStart": row.get("mulai"), "periodEnd": row.get("selesai"), "rating": row.get("hasil_1_5"),
                 "takeRate": row.get("take_rate_pct"), "upliftPct": row.get("kenaikan_revenue_pct"),

@@ -7,12 +7,12 @@ import { NumInput } from "./Calculator";
 import { BotFace } from "./Assistant";
 
 const RATING = [[1, "Gagal"], [2, "Kurang"], [3, "Sesuai target"], [4, "Berhasil"], [5, "Sangat berhasil"]];
-const TEMPLATE = "nama;platform;jenis_promo;tujuan;area;mulai;selesai;hasil_1_5;take_rate_pct;kenaikan_revenue_pct;pencapaian_target_pct;diskon_pct;catatan\n" +
-  "Diskon Gajian Agustus;gofood;diskon_persen;online;jakarta;2026-08-25;2026-08-31;4;15;12;;20;Ramai di jam makan siang\n" +
-  "Bundle Mozza Juli;offline_gerobak;bundle;aov;bandung;2026-07-01;2026-07-21;;9;;110;10;\n";
+const TEMPLATE = "nama;platform;jenis_promo;tujuan;tujuan_pendukung;area;mulai;selesai;hasil_1_5;take_rate_pct;kenaikan_revenue_pct;pencapaian_target_pct;diskon_pct;catatan\n" +
+  "Diskon Gajian Agustus;gofood;diskon_persen;online;;jakarta;2026-08-25;2026-08-31;4;15;12;;20;Ramai di jam makan siang\n" +
+  "Bundle Mozza Juli;offline_gerobak;bundle;aov;trial;bandung;2026-07-01;2026-07-21;;9;;110;10;\n";
 
 const blank = (st) => ({
-  nama: "", platformProfileId: st.profiles[0]?.id || "", mechanism: "diskon_persen", objective: "trial", areas: ["bandung"],
+  nama: "", platformProfileId: st.profiles[0]?.id || "", mechanism: "diskon_persen", objective: "trial", objective2: "", areas: ["bandung"],
   periodStart: "", periodEnd: "", rating: 3, takeRate: "", upliftPct: "", achievement: "", discountPct: "", note: "",
 });
 
@@ -151,8 +151,13 @@ export default function Learning({ st }) {
                   {Object.entries(st.mechanisms).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select></div>
               <div><label className="lbl">Tujuan</label>
-                <select className="field" value={form.objective} onChange={(e) => set({ objective: e.target.value })}>
+                <select className="field" value={form.objective} onChange={(e) => set({ objective: e.target.value, ...(form.objective2 === e.target.value ? { objective2: "" } : {}) })}>
                   {Object.entries(st.objectives).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select></div>
+              <div><label className="lbl">Tujuan pendukung</label>
+                <select className="field" value={form.objective2 || ""} onChange={(e) => set({ objective2: e.target.value })}>
+                  <option value="">Tidak ada</option>
+                  {Object.entries(st.objectives).filter(([k]) => k !== form.objective).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select></div>
               <div><label className="lbl">Area</label>
                 <select className="field" value={form.areas[0]} onChange={(e) => set({ areas: [e.target.value] })}>

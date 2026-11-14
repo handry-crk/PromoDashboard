@@ -218,7 +218,17 @@ export default function Calculator({ st, reload, promoId }) {
           <div><label className="lbl" htmlFor="nama">Nama promo</label>
             <input id="nama" className="field" placeholder="mis. Mozza Duo Gerobak" value={promo.nama} onChange={(e) => up({ nama: e.target.value })} /></div>
           <div><span className="lbl">Objective</span>
-            <Chips options={Object.entries(st.objectives).map(([k, l]) => [k, l])} value={promo.objective} onChange={(v) => up({ objective: v })} /></div>
+            <Chips options={Object.entries(st.objectives).map(([k, l]) => [k, l])} value={promo.objective}
+              onChange={(v) => up({ objective: v, ...(promo.objective2 === v ? { objective2: null } : {}) })} /></div>
+          <div><span className="lbl">Objective pendukung <span className="font-normal text-ink/50">(opsional)</span></span>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(st.objectives).filter(([k]) => k !== promo.objective).map(([k, l]) => {
+                const on = promo.objective2 === k;
+                return <button type="button" key={k} aria-pressed={on} onClick={() => up({ objective2: on ? null : k })}
+                  className={`rounded-full px-3 min-h-[34px] text-[13px] font-semibold border transition ${on ? "border-bata bg-blush text-bata" : "border-line bg-white/60 text-ink/70 hover:border-bata/60"}`}>{l}</button>;
+              })}
+            </div>
+            <p className="text-[12px] text-ink/55 mt-1.5">Durasi, timing, dan target mengikuti objective utama. Pendukung ikut dihitung 30% di skor Fit objective.</p></div>
           <div><span className="lbl">Platform / channel</span>
             {CH_ORDER.map((g) => (
               <div key={g} className="mb-2">
@@ -236,6 +246,7 @@ export default function Calculator({ st, reload, promoId }) {
                         fixedCosts: (promo.fixedCosts || []).length && promo.platformProfileId?.startsWith("event") ? promo.fixedCosts : (np.eventFixedTemplate || []).map((x) => ({ ...x })),
                         event: { ...(promo.event || {}) },
                         objective: ["aov", "online"].includes(promo.objective) ? "awareness" : promo.objective,
+                        objective2: promo.objective2 === "awareness" && ["aov", "online"].includes(promo.objective) ? null : promo.objective2,
                         scenarioInputs: { pesimis: { takeRate: 20, footfallMult: 0.7 }, target: { takeRate: 30, footfallMult: 1 }, optimis: { takeRate: 40, footfallMult: 1.3 } },
                       } : prof?.channelType === "event" ? { fixedCosts: [], scenarioInputs: blankPromo().scenarioInputs } : {}) });
                   }} />
@@ -317,7 +328,7 @@ export default function Calculator({ st, reload, promoId }) {
           <div className="grid grid-cols-2 gap-3">
             <button type="button" className="col-span-2 btn-soft !justify-start" onClick={() => {
               sessionStorage.setItem("crk_bot_prefill", JSON.stringify({
-                platformProfileId: promo.platformProfileId, objective: promo.objective, areas: promo.areas,
+                platformProfileId: promo.platformProfileId, objective: promo.objective, objective2: promo.objective2 || undefined, areas: promo.areas,
                 products: [...new Set((promo.items || []).map((i) => i.productId))],
                 duration: Math.max(1, Math.round((new Date(promo.periodEnd) - new Date(promo.periodStart)) / 864e5) + 1),
                 checkStart: promo.periodStart, checkEnd: promo.periodEnd, promoName: promo.nama || undefined, excludeId: saved?.id,

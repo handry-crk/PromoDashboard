@@ -8,7 +8,7 @@ import { go } from "../App";
 
 export default function Recommend({ st, reload }) {
   const toast = useToast();
-  const [f, setF] = useState({ platformProfileId: "offline_gerobak", objective: "aov", area: "bandung", maxDiscountPct: 20,
+  const [f, setF] = useState({ platformProfileId: "offline_gerobak", objective: "aov", objective2: "", area: "bandung", maxDiscountPct: 20,
     allowCofunding: false, maxPlatformPct: 50, budget: "", programsAllowed: [], outlets: "", trxPerOutletDay: "" });
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -19,7 +19,7 @@ export default function Recommend({ st, reload }) {
     setBusy(true); setRes(null);
     try {
       const body = { ...f };
-      ["budget", "outlets", "trxPerOutletDay"].forEach((k) => { if (body[k] === "") delete body[k]; });
+      ["budget", "outlets", "trxPerOutletDay", "objective2"].forEach((k) => { if (body[k] === "") delete body[k]; });
       const t0 = Date.now();
       const r = await api("/recommend", { method: "POST", body });
       await new Promise((ok) => setTimeout(ok, Math.max(0, 900 - (Date.now() - t0))));
@@ -72,8 +72,13 @@ export default function Recommend({ st, reload }) {
             ))}
           </select></div>
         <div><span className="lbl">Objective</span>
-          <select className="field" value={f.objective} onChange={(e) => set({ objective: e.target.value })}>
+          <select className="field" value={f.objective} onChange={(e) => set({ objective: e.target.value, ...(f.objective2 === e.target.value ? { objective2: "" } : {}) })}>
             {Object.entries(st.objectives).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select></div>
+        <div><span className="lbl">Objective pendukung <span className="font-normal text-ink/50">(opsional)</span></span>
+          <select className="field" value={f.objective2} onChange={(e) => set({ objective2: e.target.value })} aria-label="Objective pendukung">
+            <option value="">Tidak ada</option>
+            {Object.entries(st.objectives).filter(([k]) => k !== f.objective).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select></div>
         <div><span className="lbl">Area</span>
           <div className="grid grid-cols-2 gap-2">{[["bandung", "Bandung Raya"], ["jakarta", "Jabodetabek"]].map(([k, l]) => (
@@ -129,6 +134,7 @@ export default function Recommend({ st, reload }) {
                     <MiniBall title="Margin" label={x.result.margin.label} score={x.result.margin.score} />
                     <MiniBall title="Menarik" label={x.result.menarik.label} score={x.result.menarik.score} />
                     <Badge label={x.result.gate} /><span className="pill">{x.result.quadrant}</span>
+                    {x.promo.objective2 && <span className="pill">Fit {st.objectives[x.promo.objective]}: {x.result.menarik.fit} · {st.objectives[x.promo.objective2]}: {x.result.menarik.fit2}</span>}
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 text-[13px]">
                     <Kv k="Harga" v={`${rp(x.result.unit.listPrice)} → ${rp(x.result.unit.customerPays)}`} />
