@@ -89,3 +89,11 @@ Menu **Data belajar**: masukkan hasil promo yang pernah dijalankan lewat form at
 - Ukuran hasil: pencapaian vs target (%), atau penilaian 1–5 (Gagal … Sangat berhasil), atau kenaikan revenue (%). Opsional: take rate, diskon, catatan.
 - Dipakai oleh: bot timing (pengaruh gajian, momen/hari besar, dan bulan per jenis channel; aktif setelah ≥ 3 hasil per jenis channel; bot juga mengutip promo serupa), rekomendasi promo (pengali performa per jenis promo × platform dan kalibrasi skor Menarik dari take rate, ≥ 3 hasil), dan saran durasi (rata-rata durasi promo sejenis yang capai target, ≥ 3 hasil).
 - Settings → **Unduh backup**: semua data dalam satu file JSON (tanpa PIN).
+
+## Riwayat perubahan (audit log)
+
+Menu **Riwayat** mencatat siapa mengubah apa dan kapan: produk & HPP (nilai lama → baru), biaya platform, settings, baseline, promo, anggota, data belajar, momen kalender, serta file yang diimport (nama file ikut tercatat). Bisa difilter per kategori/orang, dicari, dan diunduh CSV. Viewer tidak bisa membukanya. Data ada di koleksi `audit` dan ikut dalam backup.
+
+## Tambah anggota langsung
+
+Settings → **Tambah anggota langsung**: Marketing Manager mengisi nama, email kantor, dan role. Anggota langsung disetujui dan membuat PIN sendiri lewat link aktivasi (`/?aktivasi=…`, berlaku `SETUP_DAYS` = 14 hari, sekali pakai). Galuh Yusnindar (Revenue Growth Specialist) dan Kintan Asokawati (Marketing Team Leader) ditambahkan otomatis saat server start.

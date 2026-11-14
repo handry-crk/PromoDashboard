@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Pencil, Upload, Download, History, Plus } from "lucide-react";
-import { api, rp, getToken, fmtDate } from "../lib";
+import { api, rp, getToken, fmtDate, safeName } from "../lib";
 import { Title, Sheet, useToast } from "../ui";
 import { NumInput } from "./Calculator";
 
@@ -29,7 +29,7 @@ export default function Products({ st, reload }) {
     } catch (e) { toast(e.message, "bad"); }
   };
   const importCsv = async (file) => {
-    try { const r = await api("/products/import", { method: "POST", body: await file.text(), raw: true }); toast(`${r.imported} produk diimport`); reload(); }
+    try { const r = await api("/products/import", { method: "POST", body: await file.text(), raw: true, headers: { "X-Filename": safeName(file.name) } }); toast(`${r.imported} produk diimport`); reload(); }
     catch (e) { toast(e.message, "bad"); }
   };
   useEffect(() => { if (hist === "load") api("/price-versions").then(setHist).catch(() => setHist([])); }, [hist]);

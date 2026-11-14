@@ -8,8 +8,10 @@ export function setToken(t) {
 }
 export const getToken = () => token;
 
-export async function api(path, { method = "GET", body, raw } = {}) {
-  const headers = {};
+export const safeName = (n) => String(n || "").replace(/[^\x20-\x7E]/g, "_").slice(0, 120);
+
+export async function api(path, { method = "GET", body, raw, headers: extra } = {}) {
+  const headers = { ...(extra || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined && !raw) headers["Content-Type"] = "application/json";
   const res = await fetch(`/api${path}`, { method, headers, body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined });

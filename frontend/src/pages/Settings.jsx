@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Copy, RefreshCw, KeyRound } from "lucide-react";
+import { Copy, RefreshCw, KeyRound, UserPlus } from "lucide-react";
 import { api, CH_LABEL } from "../lib";
 import { Title, useToast, Sheet } from "../ui";
 import { NumInput } from "./Calculator";
@@ -48,6 +48,20 @@ export default function Settings({ st, reload }) {
       toast("Link undangan dibuat dan disalin"); setInvEmail(""); loadInv();
     } catch (e) { toast(e.message, "bad"); }
   };
+  const [nm, setNm] = useState({ name: "", email: "", role: "viewer" });
+  const setupUrl = (tk) => `${window.location.origin}/?aktivasi=${tk}`;
+  const copy = (text, msg) => (navigator.clipboard ? navigator.clipboard.writeText(text).then(() => toast(msg)).catch(() => toast(text)) : toast(text));
+  const addMember = async () => {
+    try {
+      const r = await api("/members", { method: "POST", body: nm });
+      copy(setupUrl(r.setupToken), `${nm.name} ditambahkan. Link aktivasi disalin`);
+      setNm({ name: "", email: "", role: "viewer" }); reload();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+  const renewSetup = async (m) => {
+    try { const r = await api(`/members/${m.id}/setup-link`, { method: "POST" }); copy(setupUrl(r.setupToken), "Link aktivasi baru disalin"); reload(); }
+    catch (e) { toast(e.message, "bad"); }
+  };
   const revoke = async (tk) => { try { await api(`/invites/${tk}`, { method: "DELETE" }); loadInv(); } catch (e) { toast(e.message, "bad"); } };
   const resetPin = async () => {
     try { await api(`/members/${pin.id}/reset-pin`, { method: "POST", body: { pin: pin.pin } }); toast(`PIN ${pin.name} direset`); setPin(null); }
@@ -86,6 +100,32 @@ export default function Settings({ st, reload }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="card p-4">
+        <div className="font-extrabold mb-1">Tambah anggota langsung</div>
+        <p className="text-[13px] text-ink/60 mb-3">Untuk orang yang sudah Anda tentukan. Tidak perlu approval lagi: kirim link aktivasinya, lalu ia membuat PIN sendiri.</p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-[1fr_1.3fr_1fr_auto] gap-2">
+          <input className="field" placeholder="Nama lengkap" value={nm.name} onChange={(e) => setNm({ ...nm, name: e.target.value })} aria-label="Nama anggota baru" />
+          <input className="field" type="email" placeholder={`nama@${st.emailDomain}`} value={nm.email} onChange={(e) => setNm({ ...nm, email: e.target.value })} aria-label="Email anggota baru" />
+          <select className="field" value={nm.role} onChange={(e) => setNm({ ...nm, role: e.target.value })} aria-label="Role anggota baru">
+            {Object.entries(st.roles).filter(([k]) => k !== "head").map(([k, l]) => {
+              const sl = (st.slots || []).find((x) => x.role === k);
+              return <option key={k} value={k} disabled={sl && !sl.open}>{l}{sl ? ` (${sl.used}/${sl.quota})` : ""}</option>;
+            })}
+          </select>
+          <button className="btn-primary" onClick={addMember} disabled={!nm.name || !nm.email}><UserPlus size={16} />Tambah</button>
+        </div>
+        {st.members.filter((m) => m.status === "invited").map((m) => (
+          <div key={m.id} className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-blush px-3 py-2.5">
+            <div className="min-w-0"><div className="font-bold">{m.name} <span className="pill ml-1">{st.roles[m.role]}</span></div>
+              <div className="text-[12px] text-ink/60 break-all">{m.email} · belum aktivasi, link berlaku s.d. {new Date(m.setupExpiresAt).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}</div></div>
+            <div className="flex gap-2">
+              <button className="btn-primary !min-h-[38px]" onClick={() => copy(setupUrl(m.setupToken), "Link aktivasi disalin")}><Copy size={15} />Copy link aktivasi</button>
+              <button className="btn-ghost !min-h-[38px]" onClick={() => renewSetup(m)} aria-label={`Buat ulang link ${m.name}`}><RefreshCw size={15} /></button>
+            </div>
+          </div>
+        ))}
       </section>
 
       <section className="card p-4">
@@ -169,7 +209,7 @@ export default function Settings({ st, reload }) {
         <div className="space-y-2">
           {st.members.filter((m) => m.status !== "pending").map((m) => (
             <div key={m.id} className="grid grid-cols-[1fr_auto] md:grid-cols-[1fr_220px_200px_auto] gap-2 items-center rounded-2xl bg-cream/60 px-3 py-2">
-              <div><div className="font-bold">{m.name}{m.isAdmin && <span className="pill ml-2">Admin</span>}</div><div className="text-[12px] text-ink/55">{m.email} {m.phone}</div></div>
+              <div><div className="font-bold">{m.name}{m.isAdmin && <span className="pill ml-2">Admin</span>}{m.status === "invited" && <span className="pill ml-2">Belum aktivasi</span>}</div><div className="text-[12px] text-ink/55">{m.email} {m.phone}</div></div>
               <select className="field !py-1.5" value={m.role} onChange={(e) => member(m, { role: e.target.value })} aria-label={`Role ${m.name}`}>
                 {Object.entries(st.roles).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
@@ -180,7 +220,7 @@ export default function Settings({ st, reload }) {
                 </select>
               ) : <div className="hidden md:block text-[12px] text-ink/45">—</div>}
               <div className="flex gap-1">
-                <button className="btn-soft !min-h-[38px] !px-3" onClick={() => setPin({ ...m, pin: "" })} aria-label={`Reset PIN ${m.name}`}><KeyRound size={15} /></button>
+                <button className="btn-soft !min-h-[38px] !px-3" disabled={m.status === "invited"} onClick={() => setPin({ ...m, pin: "" })} aria-label={`Reset PIN ${m.name}`}><KeyRound size={15} /></button>
                 <button className="btn-soft !min-h-[38px] !px-3 !text-[12px]" onClick={() => member(m, { active: !m.active })}>{m.active ? "Nonaktifkan" : "Aktifkan"}</button>
               </div>
             </div>

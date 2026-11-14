@@ -75,7 +75,7 @@ def perm_of(role: str) -> str:
 def slot_status():
     out = []
     for role, quota in SIGNUP_SLOTS.items():
-        used = db.members.count_documents({"role": role, "status": {"$in": ["pending", "approved"]}, "active": {"$ne": False}})
+        used = db.members.count_documents({"role": role, "status": {"$in": ["pending", "approved", "invited"]}, "active": {"$ne": False}})
         out.append({"role": role, "label": ROLES[role], "quota": quota, "used": used, "open": used < quota})
     return out
 
@@ -192,6 +192,7 @@ def current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not m or not m.get("active", True) or m.get("status", "approved") != "approved":
         err(401, "Akun tidak aktif atau belum disetujui Marketing Manager.")
     m = clean(m)
+    m.pop("pinHash", None)
     m["perm"] = perm_of(m["role"])
     return m
 
@@ -244,9 +245,34 @@ def redact_results(res: dict) -> dict:
     return out
 
 
+PROMO_ACT = {"create": "Membuat promo", "recalc": "Mengubah / menghitung ulang promo", "submit": "Mengajukan promo ke Finance",
+             "review_ok": "Meloloskan review margin", "return": "Mengembalikan promo ke draft", "approve": "Menyetujui promo",
+             "reject": "Menolak promo", "actual_input": "Mengisi hasil aktual promo", "edit": "Mengubah promo", "delete": "Menghapus promo"}
+
+
+def audit(user, category: str, action: str, target: str = "", detail: str = "", file=None):
+    """Riwayat perubahan: siapa, apa, kapan. Tidak pernah menggagalkan aksi utamanya."""
+    try:
+        u = user or {}
+        db.audit.insert_one({"id": secrets.token_hex(6), "at": now_iso(), "byId": u.get("id"), "byName": u.get("name") or "Sistem",
+                             "role": ROLES.get(u.get("role"), "") if u else "", "category": category, "action": action,
+                             "target": (target or "")[:120], "detail": (detail or "")[:600], "file": file})
+    except Exception as e:  # pragma: no cover
+        log.warning("Gagal mencatat riwayat: %s", e)
+
+
+def fmt_num(v):
+    try:
+        return f"{int(round(float(v))):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def log_promo(pid, user, action, note=""):
     db.promo_logs.insert_one({"promoId": pid, "at": now_iso(), "byId": user["id"], "byName": user["name"],
                               "action": action, "note": note})
+    p = db.promos.find_one({"id": pid}) or {}
+    audit(user, "promo", PROMO_ACT.get(action, action), f"{p.get('kode', pid)} {p.get('nama', '')}".strip(), note)
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +560,7 @@ def register(body: dict, request: Request):
     db.members.insert_one(m)
     if inv:
         db.invites.update_one({"token": inv["token"]}, {"$set": {"usedAt": now_iso(), "usedBy": m["id"], "usedByName": name}})
+        audit(m, "anggota", "Mendaftar lewat undangan", name, f"{ROLES.get(role, role)} · {email}")
     get_settings()
     if not first:
         return {"pending": True, "message": f"Pendaftaran {ROLES[role]} terkirim. Anda bisa login setelah disetujui Marketing Manager."}
@@ -554,12 +581,16 @@ def login(body: dict, request: Request):
                                      "hidden": {"$ne": True}})
     key = f"m:{m['id']}" if m else f"u:{ident.lower()}"
     guard_lock(key)
+    if m and m.get("status") == "invited":
+        err(403, "Akun belum diaktifkan. Buka link aktivasi dari Marketing Manager untuk membuat PIN.")
     if not m or not m.get("active", True) or not check_pin(str(body.get("pin") or ""), m.get("pinHash", "")):
         fail(key, ip)
         err(401, "Nama/email atau PIN salah.")
     clear_fails(key)
     if m.get("status", "approved") == "pending":
         err(403, "Akun Anda masih menunggu approval Marketing Manager.")
+    if m.get("status") == "invited":
+        err(403, "Akun belum diaktifkan. Buka link aktivasi dari Marketing Manager untuk membuat PIN.")
     if m.get("status") == "rejected":
         err(403, "Pendaftaran Anda ditolak. Hubungi Marketing Manager.")
     return {"token": make_session(m), "user": {k: v for k, v in clean(m).items() if k != "pinHash"}}
@@ -808,6 +839,8 @@ def update_promo(pid: str, body: dict, user=Depends(require("planner", "channel_
 
 @app.delete("/api/promos/{pid}")
 def delete_promo(pid: str, user=Depends(require("head"))):
+    p = db.promos.find_one({"id": pid}) or {}
+    audit(user, "promo", "Menghapus promo", f"{p.get('kode', pid)} {p.get('nama', '')}".strip())
     db.promos.delete_one({"id": pid})
     return {"ok": True}
 
@@ -945,6 +978,7 @@ def add_product(body: dict, user=Depends(require("finance", "head"))):
          "channels": body.get("channels") or ["kios"], "active": True}
     db.products.insert_one(p)
     bump_price_version(user, f"Tambah produk {p['nama']}")
+    audit(user, "produk", "Menambah produk", p["nama"], f"HPP {fmt_num(p['hpp'])}; harga " + ", ".join(f"{a} {fmt_num(v)}" for a, v in p["prices"].items()))
     return clean(p)
 
 
@@ -964,6 +998,17 @@ def edit_product(pid: str, body: dict, user=Depends(current_user)):
         upd["hpp"] = int(upd["hpp"])
     db.products.update_one({"id": pid}, {"$set": upd})
     changes = ", ".join(f"{k}" for k in upd)
+    diffs = []
+    if "hpp" in upd and upd["hpp"] != p.get("hpp"):
+        diffs.append(f"HPP {fmt_num(p.get('hpp'))} → {fmt_num(upd['hpp'])}")
+    for a in ("bandung", "jakarta"):
+        if "prices" in upd and (upd["prices"] or {}).get(a) != (p.get("prices") or {}).get(a):
+            diffs.append(f"Harga {a.title()} {fmt_num((p.get('prices') or {}).get(a))} → {fmt_num((upd['prices'] or {}).get(a))}")
+    for k, lab in (("nama", "Nama"), ("kategori", "Kategori"), ("active", "Aktif"), ("channels", "Channel"), ("platformPrices", "Harga platform")):
+        if k in upd and upd[k] != p.get(k, True if k == "active" else None):
+            diffs.append(f"{lab} diubah" if k in ("channels", "platformPrices") else f"{lab}: {p.get(k)} → {upd[k]}")
+    if diffs:
+        audit(user, "produk", "Mengubah produk", p["nama"], "; ".join(diffs))
     bump_price_version(user, f"Ubah {p['nama']}: {changes}")
     return clean(db.products.find_one({"id": pid}))
 
@@ -991,6 +1036,7 @@ async def import_products(request: Request, user=Depends(require("finance", "hea
             db.products.insert_one(doc)
         n += 1
     bump_price_version(user, f"Import CSV {n} produk")
+    audit(user, "file", "Mengimport file produk & HPP", f"{n} produk", "", request.headers.get("x-filename"))
     return {"imported": n}
 
 
@@ -1008,6 +1054,7 @@ def add_profile(body: dict, user=Depends(require("finance", "head"))):
     p.setdefault("feeComponents", [])
     p.setdefault("programs", [])
     db.profiles.insert_one(p)
+    audit(user, "platform", "Menambah profil platform", p.get("label", ""))
     return clean(p)
 
 
@@ -1026,6 +1073,24 @@ def edit_profile(pid: str, body: dict, user=Depends(current_user)):
     new = {**old, **body, "version": old.get("version", 1) + 1, "verified": False, "updatedAt": now_iso(),
            "updatedBy": user["name"]}
     db.profiles.replace_one({"id": pid}, new)
+    diffs = []
+    oc = {c.get("key"): c for c in old.get("feeComponents") or []}
+    val = lambda x: (f"{x.get('rate') or 0:g}%" if str(x.get("type", "")).startswith("percent") else f"Rp{fmt_num(x.get('amount') or 0)}")
+    for c in new.get("feeComponents") or []:
+        o = oc.pop(c.get("key"), None)
+        if o is None:
+            diffs.append(f"+ {c.get('label')} {val(c)}")
+        elif val(o) != val(c) or o.get("active", True) != c.get("active", True) or o.get("base") != c.get("base"):
+            diffs.append(f"{c.get('label')} {val(o)} → {val(c)}" + ("" if o.get("active", True) == c.get("active", True) else " (aktif/nonaktif)"))
+    diffs += [f"− {o.get('label')}" for o in oc.values()]
+    for k, lab in (("ppnPct", "PPN atas biaya"), ("adminFeeDiscountPct", "Diskon biaya admin"), ("avgUnitsPerOrder", "Porsi per order"), ("label", "Nama")):
+        if old.get(k) != new.get(k):
+            diffs.append(f"{lab} {old.get(k)} → {new.get(k)}")
+    for k, lab in (("pricing", "Harga/markup"), ("costs", "Biaya channel"), ("ads", "Ads"), ("programs", "Program"),
+                   ("eventDefaults", "Asumsi event"), ("eventFixedTemplate", "Template biaya tetap")):
+        if old.get(k) != new.get(k):
+            diffs.append(f"{lab} diubah")
+    audit(user, "platform", "Mengubah biaya platform", new.get("label", pid), "; ".join(diffs) or "Disimpan tanpa perubahan angka")
     return clean(new)
 
 
@@ -1036,6 +1101,7 @@ def dup_profile(pid: str, user=Depends(require("finance", "head"))):
         err(404, "Profil tidak ditemukan.")
     p.update({"id": f"{pid}-{secrets.token_hex(2)}", "label": p["label"] + " (salinan)", "version": 1, "verified": False})
     db.profiles.insert_one(p)
+    audit(user, "platform", "Menduplikat profil platform", p["label"])
     return clean(p)
 
 
@@ -1049,6 +1115,7 @@ def verify_profile(pid: str, body: dict | None = None, user=Depends(current_user
     note = (body or {}).get("sourceNote") or f"Divalidasi {user['name']}"
     db.profiles.update_one({"id": pid}, {"$set": {"verified": True, "verifiedBy": user["name"], "verifiedAt": now_iso(),
                                                   "sourceNote": note}})
+    audit(user, "platform", "Memvalidasi biaya platform", p.get("label", pid), note)
     return clean(db.profiles.find_one({"id": pid}))
 
 
@@ -1070,7 +1137,24 @@ def put_settings(body: dict, user=Depends(require("head"))):
         upd["adminPinHash"] = hash_pin(str(body["adminPin"]))
     if body.get("regenerateShareToken"):
         upd["shareToken"] = secrets.token_urlsafe(24)
+    before = get_settings()
     db.settings.update_one({"_id": "main"}, {"$set": upd})
+    names = {"safeDiscountGm": "GM aman diskon", "lowMarginGm": "GM hindari gratis", "offlineMarginFloorPct": "Batas CM offline",
+             "onlineMarginFloorPct": "Batas CM online food", "marketplaceMarginFloorPct": "Batas CM marketplace",
+             "roundingStep": "Pembulatan harga", "weights": "Bobot rekomendasi", "adminEmail": "Email admin", "fit": "Matriks objective",
+             "psychPoints": "Harga psikologis", "adminPinHash": "PIN Admin cadangan diganti", "shareToken": "Link Reporting dibuat ulang"}
+    ch = []
+    for k, v in upd.items():
+        if before.get(k) == v:
+            continue
+        if k in ("adminPinHash", "shareToken"):
+            ch.append(names[k])
+        elif k in ("weights", "fit", "psychPoints", "baselines"):
+            ch.append(names.get(k, k) + " diubah")
+        else:
+            ch.append(f"{names.get(k, k)} {before.get(k)} → {v}")
+    if ch:
+        audit(user, "settings", "Mengubah settings", "", "; ".join(ch))
     return public_settings(get_settings())
 
 
@@ -1079,8 +1163,12 @@ def put_baselines(body: dict, user=Depends(require("head", "finance"))):
     s = get_settings()
     b = s.get("baselines") or {}
     pid, area = body.get("platformId"), body.get("area")
+    old_b = dict((b.get(pid) or {}).get(area) or {})
     b.setdefault(pid, {})[area] = body.get("baseline") or {}
     db.settings.update_one({"_id": "main"}, {"$set": {"baselines": b}})
+    nb = b[pid][area]
+    audit(user, "settings", "Mengubah baseline", f"{(profiles_map().get(pid) or {}).get('label', pid)} · {area}",
+          "; ".join(f"{k} {old_b.get(k)} → {nb.get(k)}" for k in sorted(set(old_b) | set(nb)) if old_b.get(k) != nb.get(k)))
     return b
 
 
@@ -1097,7 +1185,7 @@ def put_member(mid: str, body: dict, user=Depends(require("head"))):
         if mid == user["id"]:
             err(400, "Anda tidak bisa menonaktifkan atau menurunkan role akun sendiri.")
         others = db.members.count_documents({"id": {"$ne": mid}, "active": {"$ne": False}, "hidden": {"$ne": True},
-                                             "status": {"$nin": ["pending", "rejected"]},
+                                             "status": {"$nin": ["pending", "rejected", "invited"]},
                                              "$or": [{"isAdmin": True}, {"role": "head"}]})
         if others == 0:
             err(400, "Harus ada minimal satu Marketing Manager aktif.")
@@ -1106,7 +1194,152 @@ def put_member(mid: str, body: dict, user=Depends(require("head"))):
         if not slot["open"]:
             err(400, f"Slot {slot['label']} sudah terisi.")
     db.members.update_one({"id": mid}, {"$set": upd})
+    ch = []
+    if "role" in upd and upd["role"] != target.get("role"):
+        ch.append(f"Role {ROLES.get(target.get('role'), target.get('role'))} → {ROLES.get(upd['role'])}")
+    if "active" in upd and upd["active"] != target.get("active", True):
+        ch.append("Diaktifkan" if upd["active"] else "Dinonaktifkan")
+    if "platforms" in upd and upd["platforms"] != target.get("platforms"):
+        ch.append("Platform yang dipegang diubah")
+    if ch:
+        audit(user, "anggota", "Mengubah anggota", target.get("name", ""), "; ".join(ch))
     return {"ok": True}
+
+
+AUDIT_CATS = {"promo": "Promo", "produk": "Produk & HPP", "platform": "Biaya platform", "settings": "Settings", "anggota": "Anggota",
+              "belajar": "Data belajar", "kalender": "Kalender", "file": "File & import"}
+
+
+@app.get("/api/audit")
+def list_audit(category: str = "", by: str = "", q: str = "", limit: int = 200, user=Depends(no_viewer)):
+    flt = {}
+    if category in AUDIT_CATS:
+        flt["category"] = category
+    if by:
+        flt["byId"] = by
+    rows = clean(list(db.audit.find(flt).sort("at", -1).limit(max(1, min(int(limit), 500)) * (3 if q else 1))))
+    if q:
+        ql = q.lower()
+        rows = [r for r in rows if ql in f"{r.get('action','')} {r.get('target','')} {r.get('detail','')} {r.get('byName','')} {r.get('file') or ''}".lower()]
+    rows = rows[:max(1, min(int(limit), 500))]
+    people = sorted({(r.get("byId"), r.get("byName")) for r in clean(list(db.audit.find({}, {"byId": 1, "byName": 1}))) if r.get("byId")},
+                    key=lambda x: x[1] or "")
+    return {"rows": rows, "categories": AUDIT_CATS, "people": [{"id": a, "name": b} for a, b in people], "total": db.audit.count_documents(flt)}
+
+
+SETUP_DAYS = int(os.getenv("SETUP_DAYS", "14"))
+
+
+def new_setup_token():
+    return secrets.token_urlsafe(24), (datetime.now(timezone.utc) + timedelta(days=SETUP_DAYS)).isoformat()
+
+
+def create_invited_member(name: str, email: str, role: str, by: dict | None):
+    """Anggota yang ditambahkan langsung oleh Marketing Manager: sudah disetujui, tinggal membuat PIN lewat link aktivasi."""
+    name, email = (name or "").strip(), (email or "").strip().lower()
+    if not name:
+        raise ValueError("Isi nama anggota.")
+    if not email.endswith("@" + EMAIL_DOMAIN) or email.count("@") != 1:
+        raise ValueError(f"Gunakan email kantor @{EMAIL_DOMAIN}.")
+    if role not in ROLES or role == "head":
+        raise ValueError("Pilih role anggota.")
+    if db.members.find_one({"email": email, "status": {"$ne": "rejected"}}):
+        raise ValueError("Email ini sudah terdaftar.")
+    if db.members.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "status": {"$ne": "rejected"}}):
+        raise ValueError("Nama sudah terdaftar.")
+    if role in SIGNUP_SLOTS:
+        slot = next(x for x in slot_status() if x["role"] == role)
+        if not slot["open"]:
+            raise ValueError(f"Slot {slot['label']} sudah terisi.")
+    tok, exp = new_setup_token()
+    m = {"id": secrets.token_hex(6), "name": name, "role": role, "email": email, "phone": "", "pinHash": "", "active": True,
+         "isAdmin": False, "status": "invited", "platforms": [], "createdAt": now_iso(), "setupToken": tok, "setupExpiresAt": exp,
+         "addedBy": (by or {}).get("name") or "Sistem"}
+    db.members.insert_one(m)
+    audit(by, "anggota", "Menambah anggota", name, f"{ROLES[role]} · {email} (menunggu aktivasi)")
+    return m
+
+
+@app.post("/api/members")
+def add_member(body: dict, user=Depends(require("head"))):
+    try:
+        m = create_invited_member(body.get("name"), body.get("email"), body.get("role"), user)
+    except ValueError as e:
+        err(400, str(e))
+    return {"id": m["id"], "setupToken": m["setupToken"]}
+
+
+@app.post("/api/members/{mid}/setup-link")
+def renew_setup(mid: str, user=Depends(require("head"))):
+    m = db.members.find_one({"id": mid})
+    if not m or m.get("status") != "invited":
+        err(400, "Anggota ini sudah aktif atau tidak ditemukan.")
+    tok, exp = new_setup_token()
+    db.members.update_one({"id": mid}, {"$set": {"setupToken": tok, "setupExpiresAt": exp}})
+    audit(user, "anggota", "Membuat ulang link aktivasi", m.get("name", ""))
+    return {"setupToken": tok}
+
+
+def find_setup(token: str):
+    if not token:
+        return None
+    m = db.members.find_one({"setupToken": token, "status": "invited", "active": {"$ne": False}})
+    if not m or datetime.fromisoformat(m["setupExpiresAt"]) < datetime.now(timezone.utc):
+        return None
+    return m
+
+
+@app.get("/api/public/setup/{token}")
+def public_setup(token: str):
+    m = find_setup(token)
+    if not m:
+        err(404, "Link aktivasi tidak valid atau kedaluwarsa. Minta link baru ke Marketing Manager.")
+    return {"name": m["name"], "label": ROLES.get(m["role"], m["role"]), "email": m["email"]}
+
+
+@app.post("/api/auth/setup")
+def auth_setup(body: dict, request: Request):
+    ip = f"ipreg:{client_ip(request)}"
+    guard_lock(ip, IP_MAX)
+    m = find_setup(body.get("token") or "")
+    if not m:
+        fail(ip)
+        err(404, "Link aktivasi tidak valid atau kedaluwarsa. Minta link baru ke Marketing Manager.")
+    pin = str(body.get("pin") or "")
+    if not (pin.isdigit() and 4 <= len(pin) <= 6):
+        err(400, "PIN harus 4–6 angka.")
+    db.members.update_one({"id": m["id"]}, {"$set": {"pinHash": hash_pin(pin), "status": "approved", "activatedAt": now_iso(),
+                                                    "phone": (body.get("phone") or "")[:20]},
+                                           "$unset": {"setupToken": "", "setupExpiresAt": ""}})
+    m = db.members.find_one({"id": m["id"]})
+    audit(m, "anggota", "Mengaktifkan akun", m["name"], ROLES.get(m["role"], ""))
+    return {"token": make_session(m), "user": {k: v for k, v in clean(m).items() if k not in ("pinHash",)}}
+
+
+PRESET_MEMBERS = [
+    ("Galuh Yusnindar", "galuh.yusnindar@citarasakuliner.com", "revenue_growth"),
+    ("Kintan Asokawati", "kintan.asokawati@citarasakuliner.com", "team_leader"),
+]
+
+
+def seed_preset_members():
+    """Tambahkan anggota yang diminta Marketing Manager (14 Nov 2026). Hanya jalan bila sudah ada Admin dan email belum terdaftar."""
+    try:
+        if db.members.count_documents({"isAdmin": True, "hidden": {"$ne": True}}) == 0:
+            return
+        for name, email, role in PRESET_MEMBERS:
+            if db.members.find_one({"email": email}):
+                continue
+            try:
+                create_invited_member(name, email, role, None)
+                log.info("Anggota ditambahkan: %s (%s)", name, role)
+            except ValueError as e:
+                log.warning("Anggota %s tidak ditambahkan: %s", email, e)
+    except Exception as e:  # pragma: no cover
+        log.warning("Seed anggota gagal: %s", e)
+
+
+seed_preset_members()
 
 
 @app.post("/api/invites")
@@ -1129,6 +1362,7 @@ def create_invite(body: dict, user=Depends(require("head"))):
     inv = {"token": secrets.token_urlsafe(24), "role": role, "email": email or None, "createdBy": user["name"], "createdAt": now_iso(),
            "expiresAt": (datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS)).isoformat(), "usedAt": None}
     db.invites.insert_one(inv)
+    audit(user, "anggota", "Membuat link undangan", ROLES.get(role, role), email or "")
     return clean(inv)
 
 
@@ -1145,7 +1379,9 @@ def list_invites(user=Depends(require("head"))):
 
 @app.delete("/api/invites/{token}")
 def revoke_invite(token: str, user=Depends(require("head"))):
+    inv = db.invites.find_one({"token": token}) or {}
     db.invites.update_one({"token": token}, {"$set": {"revoked": True}})
+    audit(user, "anggota", "Membatalkan link undangan", ROLES.get(inv.get("role"), ""), inv.get("email") or "")
     return {"ok": True}
 
 
@@ -1159,6 +1395,8 @@ def approve_member(mid: str, body: dict, user=Depends(require("head"))):
     else:
         db.members.update_one({"id": mid}, {"$set": {"status": "rejected", "active": False, "rejectedBy": user["name"],
                                                      "rejectedAt": now_iso()}})
+    audit(user, "anggota", "Menyetujui anggota" if body.get("decision") == "approve" else "Menolak pendaftaran", m.get("name", ""),
+          f"{ROLES.get(m.get('role'), '')} · {m.get('email', '')}")
     return {"ok": True}
 
 
@@ -1169,6 +1407,7 @@ def reset_pin(mid: str, body: dict, user=Depends(require("head"))):
         err(400, "PIN baru harus 4–6 angka.")
     db.members.update_one({"id": mid}, {"$set": {"pinHash": hash_pin(pin)}})
     clear_fails(f"m:{mid}")
+    audit(user, "anggota", "Mereset PIN anggota", (db.members.find_one({"id": mid}) or {}).get("name", ""))
     return {"ok": True}
 
 
@@ -1613,6 +1852,7 @@ def add_learning(body: dict, user=Depends(require("head", "planner", "finance", 
         err(400, str(e))
     d.update({"id": secrets.token_hex(5), "by": user["name"], "byId": user["id"], "createdAt": now_iso()})
     db.learnings.insert_one(d)
+    audit(user, "belajar", "Menambah hasil promo", d["nama"], f"{d['periodStart']} s.d. {d['periodEnd']}")
     return clean(d)
 
 
@@ -1624,6 +1864,7 @@ def del_learning(lid: str, user=Depends(require("head", "planner", "finance", "c
     if not (user.get("isAdmin") or user["perm"] == "head" or r.get("byId") == user["id"]):
         err(403, "Hanya pembuat data atau Marketing Manager yang bisa menghapus.")
     db.learnings.delete_one({"id": lid})
+    audit(user, "belajar", "Menghapus hasil promo", r.get("nama", ""))
     return {"ok": True}
 
 
@@ -1665,6 +1906,8 @@ async def import_learnings(request: Request, user=Depends(require("head", "plann
         d.update({"id": secrets.token_hex(5), "by": user["name"], "byId": user["id"], "createdAt": now_iso()})
         db.learnings.insert_one(d)
         ok += 1
+    audit(user, "file", "Mengimport file hasil promo", f"{ok} hasil promo", f"{len(errors)} baris ditolak" if errors else "",
+          request.headers.get("x-filename"))
     return {"imported": ok, "errors": errors[:20]}
 
 
@@ -1674,7 +1917,9 @@ def backup(user=Depends(require("head"))):
     for col in ("products", "profiles", "promos", "promo_logs", "comments", "learnings", "price_versions", "profile_versions", "invites"):
         data[col] = clean(list(db[col].find({})))
     data["settings"] = public_settings(get_settings())
-    data["members"] = [{k: v for k, v in clean(m).items() if k != "pinHash"} for m in db.members.find({})]
+    data["members"] = [{k: v for k, v in clean(m).items() if k not in ("pinHash", "setupToken")} for m in db.members.find({})]
+    data["audit"] = clean(list(db.audit.find({})))
+    audit(user, "file", "Mengunduh backup data", "Backup")
     return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="crk-promo-backup-{today().isoformat()}.json"'})
 
 
@@ -1693,12 +1938,15 @@ def add_moment(body: dict, user=Depends(require("head", "planner", "finance"))):
     mo = {"id": secrets.token_hex(4), "date": body["date"], "end": body.get("end") or None, "label": body["label"].strip()[:60],
           "type": body.get("type") or "momen", "by": user["name"]}
     db.settings.update_one({"_id": "main"}, {"$push": {"moments": mo}})
+    audit(user, "kalender", "Menambah momen", mo["label"], mo["date"] + (f" s.d. {mo['end']}" if mo.get("end") else ""))
     return mo
 
 
 @app.delete("/api/moments/{mid}")
 def del_moment(mid: str, user=Depends(require("head", "planner", "finance"))):
+    old_m = next((x for x in get_settings().get("moments") or [] if x.get("id") == mid), {})
     db.settings.update_one({"_id": "main"}, {"$pull": {"moments": {"id": mid}}})
+    audit(user, "kalender", "Menghapus momen", old_m.get("label", ""))
     return {"ok": True}
 
 
@@ -1720,6 +1968,7 @@ def seed_crk(user=Depends(require("head"))):
         save_results(h)
         db.promos.insert_one(h)
         log_promo(h["id"], user, "create", "Import data CRK")
+    audit(user, "file", "Mengimport data awal CRK", f"{len(S.PRODUCTS)} produk, {len(S.PROFILES)} profil platform", "Price Structure v2")
     return {"ok": True, "products": len(S.PRODUCTS), "profiles": len(S.PROFILES)}
 
 

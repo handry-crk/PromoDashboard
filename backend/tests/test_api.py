@@ -239,3 +239,65 @@ def test_learning_data_feeds_bot():
     assert rec["platformProfileId"] == "offline_gerobak" and rec["mechanism"] == "bundle" and abs(rec["perf"] - 1.1) < 1e-9 and rec["days"] == 21
     assert c.delete(f"/api/learnings/{rec['id']}", headers=H(ha)).status_code == 200
     assert c.get("/api/backup", headers=H(ha)).status_code == 200 and "pinHash" not in c.get("/api/backup", headers=H(ha)).text
+
+
+def test_audit_and_direct_member():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    # direct add → activation link
+    assert c.post("/api/members", headers=H(ha), json={"name": "Luar", "email": "luar@gmail.com", "role": "viewer"}).status_code == 400
+    r = c.post("/api/members", headers=H(ha), json={"name": "Galuh Yusnindar", "email": "galuh.yusnindar@citarasakuliner.com", "role": "revenue_growth"})
+    assert r.status_code == 200
+    tok = r.json()["setupToken"]
+    assert c.post("/api/members", headers=H(ha), json={"name": "Lain", "email": "lain@citarasakuliner.com", "role": "revenue_growth"}).status_code == 400  # slot terisi
+    assert c.post("/api/auth/login", json={"identifier": "galuh.yusnindar@citarasakuliner.com", "pin": "1234"}).status_code == 403
+    assert c.get("/api/public/setup/salah").status_code == 404
+    assert c.get(f"/api/public/setup/{tok}").json()["label"] == "Revenue Growth Specialist"
+    assert c.post("/api/auth/setup", json={"token": tok, "pin": "12"}).status_code == 400
+    r = c.post("/api/auth/setup", json={"token": tok, "pin": "5678"})
+    assert r.status_code == 200 and "pinHash" not in r.json()["user"] and "setupToken" not in r.json()["user"]
+    tg = r.json()["token"]
+    assert c.post("/api/auth/setup", json={"token": tok, "pin": "5678"}).status_code == 404  # sekali pakai
+    assert c.post("/api/auth/login", json={"identifier": "galuh.yusnindar@citarasakuliner.com", "pin": "5678"}).status_code == 200
+    # edits are recorded with who + when
+    st = c.get("/api/state", headers=H(tg)).json()
+    p = st["products"][0]
+    assert c.put(f"/api/products/{p['id']}", headers=H(tg), json={"hpp": p["hpp"] + 100}).status_code == 200
+    assert c.post("/api/products/import", headers={**H(tg), "X-Filename": "hpp-nov.csv"}, content="nama,hpp,bandung,jakarta\nTes Audit,5000,12000,13000\n").status_code == 200
+    a = c.get("/api/audit", headers=H(tg)).json()
+    acts = [(x["action"], x["byName"]) for x in a["rows"]]
+    assert ("Mengubah produk", "Galuh Yusnindar") in acts and ("Mengaktifkan akun", "Galuh Yusnindar") in acts
+    assert ("Menambah anggota", "Handry") in acts
+    f = [x for x in a["rows"] if x["category"] == "file" and x.get("file") == "hpp-nov.csv"]
+    assert f and f[0]["at"]
+    e = next(x for x in a["rows"] if x["action"] == "Mengubah produk")
+    assert "HPP" in e["detail"] and "→" in e["detail"]
+    assert all(x["category"] == "produk" for x in c.get("/api/audit?category=produk", headers=H(tg)).json()["rows"])
+    # viewer cannot read the log
+    r = c.post("/api/members", headers=H(ha), json={"name": "Vina", "email": "vina@citarasakuliner.com", "role": "viewer"}).json()
+    tv = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "9999"}).json()["token"]
+    assert c.get("/api/audit", headers=H(tv)).status_code == 403
+
+
+def test_preset_members_seed():
+    from app.main import seed_preset_members
+    for col in db.list_collection_names():
+        db[col].drop()
+    seed_preset_members()
+    assert db.members.count_documents({}) == 0  # belum ada admin → tidak jalan
+    c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"})
+    seed_preset_members(); seed_preset_members()
+    m = {x["email"]: x for x in db.members.find({"status": "invited"})}
+    assert m["galuh.yusnindar@citarasakuliner.com"]["role"] == "revenue_growth"
+    assert m["kintan.asokawati@citarasakuliner.com"]["role"] == "team_leader"
+    assert len(m) == 2
+
+
+def test_state_hides_own_pin_hash():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    st = c.get("/api/state", headers=H(ha)).json()
+    assert "pinHash" not in st["user"] and all("pinHash" not in m for m in st["members"])

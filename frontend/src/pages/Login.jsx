@@ -14,7 +14,9 @@ export default function Login({ onIn }) {
   const [info, setInfo] = useState({ members: [], roles: {}, hasAny: true });
   const inviteToken = new URLSearchParams(window.location.search).get("undangan") || "";
   const [invite, setInvite] = useState(null);
-  const [f, setF] = useState({ identifier: "", pin: "", name: "", role: "", email: "", phone: "" });
+  const setupToken = new URLSearchParams(window.location.search).get("aktivasi") || "";
+  const [setup, setSetup] = useState(null);
+  const [f, setF] = useState({ identifier: "", pin: "", pin2: "", name: "", role: "", email: "", phone: "" });
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(null);
   const canRegister = !info.hasAny || (invite && !invite.error);
@@ -22,6 +24,11 @@ export default function Login({ onIn }) {
 
   useEffect(() => {
     api("/public/members").then((d) => { setInfo(d); if (!d.hasAny) setMode("register"); }).catch(() => {});
+    if (setupToken) {
+      api(`/public/setup/${encodeURIComponent(setupToken)}`)
+        .then((d) => { setSetup(d); setMode("setup"); })
+        .catch((e) => setSetup({ error: e.message }));
+    }
     if (inviteToken) {
       api(`/public/invite/${encodeURIComponent(inviteToken)}`)
         .then((d) => { setInvite(d); setMode("register"); })
@@ -35,6 +42,11 @@ export default function Login({ onIn }) {
     try {
       let r;
       if (mode === "login") r = await api("/auth/login", { method: "POST", body: { identifier: f.identifier, pin: f.pin } });
+      else if (mode === "setup") {
+        if (f.pin !== f.pin2) { toast("PIN dan ulangi PIN belum sama.", "bad"); return; }
+        r = await api("/auth/setup", { method: "POST", body: { token: setupToken, pin: f.pin, phone: f.phone } });
+        window.history.replaceState(null, "", "/");
+      }
       else if (mode === "admin") r = await api("/auth/admin-login", { method: "POST", body: { pin: f.pin } });
       else r = await api("/auth/register", { method: "POST", body: { name: f.name, email: f.email, phone: f.phone, pin: f.pin, invite: inviteToken } });
       if (r.pending) { setSent(r.message); return; }
@@ -88,6 +100,12 @@ export default function Login({ onIn }) {
         <form onSubmit={submit} className="w-full max-w-sm mx-auto">
           {(() => {
             const tabs = [["login", "Login"], ...(canRegister ? [["register", "Daftar"]] : []), ...(info.adminPin ? [["admin", "PIN Admin"]] : [])];
+            if (mode === "setup") return (
+              <div className="mb-6">
+                <h2 className="text-[26px] leading-tight"><b className="font-extrabold">Aktifkan</b> akun</h2>
+                <p className="text-[14px] text-ink/60 mt-1">Halo {setup?.name}. Anda ditambahkan sebagai <b>{setup?.label}</b> ({setup?.email}). Buat PIN untuk masuk.</p>
+              </div>
+            );
             if (tabs.length === 1) return (
               <div className="mb-6">
                 <h2 className="text-[26px] leading-tight"><b className="font-extrabold">Masuk</b> ke dashboard</h2>
@@ -110,6 +128,7 @@ export default function Login({ onIn }) {
             <div className="card p-3 text-[13px] mb-4">Belum ada anggota. Orang pertama yang daftar otomatis menjadi <b>Admin (Marketing Manager)</b>.</div>
           )}
           <div className="space-y-4">
+            {setup?.error && mode === "login" && <div className="card p-3 text-[13px] text-bata">{setup.error}</div>}
             {invite?.error && mode === "login" && <div className="card p-3 text-[13px] text-bata">{invite.error}</div>}
             {mode === "login" && (
               <div>
@@ -131,11 +150,19 @@ export default function Login({ onIn }) {
             <div>
               <label className="lbl" htmlFor="p">{mode === "admin" ? "PIN Admin" : "PIN (4–6 angka)"}</label>
               <input id="p" className="field tracking-[.4em] text-center text-[20px] font-bold" type="password" inputMode="numeric" maxLength={6}
-                autoComplete={mode === "register" ? "new-password" : "current-password"}
+                autoComplete={mode === "register" || mode === "setup" ? "new-password" : "current-password"}
                 value={f.pin} onChange={(e) => setF({ ...f, pin: e.target.value.replace(/\D/g, "") })} required />
             </div>
+            {mode === "setup" && (<>
+              <div>
+                <label className="lbl" htmlFor="p2">Ulangi PIN</label>
+                <input id="p2" className="field tracking-[.4em] text-center text-[20px] font-bold" type="password" inputMode="numeric" maxLength={6} autoComplete="new-password"
+                  value={f.pin2} onChange={(e) => setF({ ...f, pin2: e.target.value.replace(/\D/g, "") })} required />
+              </div>
+              <div><label className="lbl" htmlFor="w2">WhatsApp (opsional)</label><input id="w2" inputMode="tel" placeholder="08…" className="field" value={f.phone} onChange={set("phone")} /></div>
+            </>)}
             <button className="btn-primary w-full" disabled={busy}>
-              {busy ? "Memeriksa…" : mode === "register" ? (info.hasAny ? "Kirim pendaftaran" : "Daftar & masuk") : "Masuk"}</button>
+              {busy ? "Memeriksa…" : mode === "setup" ? "Aktifkan akun" : mode === "register" ? (info.hasAny ? "Kirim pendaftaran" : "Daftar & masuk") : "Masuk"}</button>
             {mode === "login" && <p className="text-[13px] text-ink/55 text-center">Belum punya akun? Minta link undangan ke Marketing Manager.</p>}
           </div>
         </form>

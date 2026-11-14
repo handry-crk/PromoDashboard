@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Plus, Upload, Download, Trash2, GraduationCap, Check } from "lucide-react";
-import { api, pc, fmtDate, CH_LABEL, CH_ORDER } from "../lib";
+import { api, pc, fmtDate, CH_LABEL, CH_ORDER, safeName } from "../lib";
 import { Title, Loader, Sheet, useToast, Empty } from "../ui";
 import { NumInput } from "./Calculator";
 import { BotFace } from "./Assistant";
@@ -36,7 +36,7 @@ export default function Learning({ st }) {
   const del = async (r) => { try { await api(`/learnings/${r.id}`, { method: "DELETE" }); load(); } catch (e) { toast(e.message, "bad"); } };
   const importCsv = async (file) => {
     try {
-      const r = await api("/learnings/import", { method: "POST", body: await file.text(), raw: true });
+      const r = await api("/learnings/import", { method: "POST", body: await file.text(), raw: true, headers: { "X-Filename": safeName(file.name) } });
       toast(`${r.imported} hasil promo diimport${r.errors.length ? `, ${r.errors.length} baris ditolak` : ""}`, r.imported ? "ok" : "bad");
       setErrors(r.errors.length ? r.errors : null); load();
     } catch (e) { toast(e.message, "bad"); }
