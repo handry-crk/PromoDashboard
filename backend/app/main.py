@@ -247,7 +247,8 @@ def redact_results(res: dict) -> dict:
 
 PROMO_ACT = {"create": "Membuat promo", "recalc": "Mengubah / menghitung ulang promo", "submit": "Mengajukan promo ke Finance",
              "review_ok": "Meloloskan review margin", "return": "Mengembalikan promo ke draft", "approve": "Menyetujui promo",
-             "reject": "Menolak promo", "actual_input": "Mengisi hasil aktual promo", "edit": "Mengubah promo", "delete": "Menghapus promo"}
+             "reject": "Menolak promo", "actual_input": "Mengisi hasil aktual promo", "edit": "Mengubah promo", "delete": "Menghapus promo",
+             "run_direct": "Menjalankan promo langsung dari rekomendasi"}
 
 
 def audit(user, category: str, action: str, target: str = "", detail: str = "", file=None):
@@ -812,6 +813,74 @@ def create_promo(body: dict, user=Depends(require("planner", "channel_pic", "hea
     db.promos.insert_one(doc)
     log_promo(doc["id"], user, "create")
     return get_promo(doc["id"], user)
+
+
+@app.post("/api/promos/run-now")
+def run_now(body: dict, user=Depends(require("planner", "channel_pic", "head"))):
+    """Dari kartu rekomendasi langsung jadi promo berjalan.
+    Marketing Manager: langsung Approved (Running bila mulai hari ini). Role lain: dibuat lalu diajukan ke Finance."""
+    doc = pick(body.get("promo") or {}, PROMO_FIELDS)
+    if not doc.get("nama"):
+        err(400, "Isi nama promo.")
+    try:
+        start = date.fromisoformat(str(body.get("startDate") or today().isoformat()))
+    except ValueError:
+        err(400, "Tanggal mulai tidak valid.")
+    if start < today():
+        err(400, "Tanggal mulai tidak boleh sebelum hari ini.")
+    try:
+        days = int(body.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    if not days:
+        try:
+            days = (date.fromisoformat(doc["periodEnd"]) - date.fromisoformat(doc["periodStart"])).days + 1
+        except Exception:
+            days = 7
+    if not 1 <= days <= 120:
+        err(400, "Durasi promo 1–120 hari.")
+    end = start + timedelta(days=days - 1)
+    doc.update({"periodStart": start.isoformat(), "periodEnd": end.isoformat()})
+    direct = bool(user.get("isAdmin") or user.get("perm") == "head")
+    try:
+        save_results(doc)
+    except E.CalcError as e:
+        err(400, str(e))
+    gates = [o["gate"]["status"] for o in (doc.get("results") or {}).values()]
+    prods = {i.get("productId") for i in doc.get("items") or [] if i.get("productId")}
+    areas = set(doc.get("areas") or ["bandung"])
+    warnings = []
+    for r in promo_rows():
+        if r["effectiveStatus"] not in ("approved", "running") or r["platformProfileId"] != doc.get("platformProfileId"):
+            continue
+        if r["periodEnd"] < start.isoformat() or r["periodStart"] > end.isoformat():
+            continue
+        if areas & set(r["areas"]) and prods & set(r["products"]):
+            warnings.append(f"Bentrok dengan {r['nama']} ({r['periodStart']} s.d. {r['periodEnd']}): produk yang sama di platform dan area yang sama.")
+    if "GO WITH CONDITION" in gates:
+        warnings.append("Gate GO WITH CONDITION: jalankan sambil memantau syaratnya di halaman promo.")
+    running = start <= today()
+    info = {"periodStart": start.isoformat(), "periodEnd": end.isoformat(), "days": days, "direct": direct, "warnings": warnings,
+            "gate": "HOLD" if "HOLD" in gates else ("GO WITH CONDITION" if "GO WITH CONDITION" in gates else "GO"),
+            "resultStatus": ("running" if running else "approved") if direct else "review_finance"}
+    if "HOLD" in gates:
+        if body.get("dryRun"):
+            return {**info, "blocked": "Promo berstatus HOLD pada periode ini. Buka di kalkulator untuk memperbaikinya."}
+        err(400, "Promo berstatus HOLD. Buka di kalkulator untuk memperbaikinya.")
+    if body.get("dryRun"):
+        return info
+    doc.update({"id": secrets.token_hex(6), "kode": next_code(doc["periodStart"]), "status": "approved" if direct else "review_finance",
+                "createdBy": user["name"], "createdById": user["id"], "createdAt": now_iso(), "updatedAt": now_iso(),
+                "source": "rekomendasi"})
+    if direct:
+        doc.update({"approvedBy": user["name"], "approvedAt": now_iso()})
+    db.promos.insert_one(doc)
+    log_promo(doc["id"], user, "create", "Dari rekomendasi")
+    if direct:
+        log_promo(doc["id"], user, "run_direct", f"{doc['periodStart']} s.d. {doc['periodEnd']} ({days} hari), tanpa review Finance")
+    else:
+        log_promo(doc["id"], user, "submit", "Diajukan langsung dari rekomendasi")
+    return {**info, "promo": get_promo(doc["id"], user)}
 
 
 @app.put("/api/promos/{pid}")

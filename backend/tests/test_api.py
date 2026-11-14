@@ -301,3 +301,38 @@ def test_state_hides_own_pin_hash():
     ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
     st = c.get("/api/state", headers=H(ha)).json()
     assert "pinHash" not in st["user"] and all("pinHash" not in m for m in st["members"])
+
+
+def test_run_now_from_recommendation():
+    from datetime import date, timedelta
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    r = c.post("/api/members", headers=H(ha), json={"name": "Kintan", "email": "kintan@citarasakuliner.com", "role": "team_leader"}).json()
+    tk = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "5678"}).json()["token"]
+    rec = c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_kios", "objective": "aov", "area": "bandung"}).json()["results"]
+    x = rec[0]["promo"]
+    today = date.today().isoformat()
+    n0 = db.promos.count_documents({})
+    pre = c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "days": 10, "dryRun": True}).json()
+    assert pre["resultStatus"] == "running" and pre["periodStart"] == today and db.promos.count_documents({}) == n0
+    out = c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "days": 10}).json()
+    assert out["promo"]["effectiveStatus"] == "running" and out["promo"]["status"] == "approved"
+    assert out["promo"]["periodEnd"] == (date.today() + timedelta(days=9)).isoformat()
+    assert any(t["action"] == "run_direct" for t in out["promo"]["timeline"])
+    assert any(a["action"].startswith("Menjalankan promo langsung") and a["byName"] == "Handry" for a in c.get("/api/audit", headers=H(ha)).json()["rows"])
+    # same promo again → bentrok warning
+    pre = c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "days": 5, "dryRun": True}).json()
+    assert any("Bentrok" in w for w in pre["warnings"])
+    # future start → approved (scheduled)
+    fut = (date.today() + timedelta(days=40)).isoformat()
+    out = c.post("/api/promos/run-now", headers=H(ha), json={"promo": rec[1]["promo"], "startDate": fut, "days": 7}).json()
+    assert out["promo"]["effectiveStatus"] == "approved"
+    # team leader cannot skip review
+    out = c.post("/api/promos/run-now", headers=H(tk), json={"promo": rec[2]["promo"], "startDate": fut, "days": 7}).json()
+    assert out["resultStatus"] == "review_finance" and out["promo"]["status"] == "review_finance"
+    # guards
+    assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "startDate": "2020-01-01"}).status_code == 400
+    assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": x, "days": 500}).status_code == 400
+    assert c.post("/api/promos/run-now", headers=H(ha), json={"promo": {}}).status_code == 400

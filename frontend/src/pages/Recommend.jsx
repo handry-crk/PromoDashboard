@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, ArrowUpRight, Save } from "lucide-react";
-import { api, rp, pc, CH_LABEL, CH_ORDER } from "../lib";
-import { Title, MiniBall, Badge, Loader, useToast, fireConfetti, CountUp } from "../ui";
+import { Sparkles, ArrowUpRight, Save, Play, TriangleAlert } from "lucide-react";
+import { api, rp, pc, fmtDate, CH_LABEL, CH_ORDER } from "../lib";
+import { Title, MiniBall, Badge, Loader, useToast, fireConfetti, CountUp, Sheet } from "../ui";
 import { NumInput } from "./Calculator";
 import { go } from "../App";
 
@@ -31,6 +31,30 @@ export default function Recommend({ st, reload }) {
   const open = (x) => {
     sessionStorage.setItem("crk_prefill", JSON.stringify({ ...x.promo, nama: x.promo.nama }));
     go("/hitung");
+  };
+  const isHead = st.user.isAdmin || st.user.perm === "head";
+  const todayStr = (() => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); })();
+  const [go1, setGo1] = useState(null); // { x, startDate, days }
+  const [pre, setPre] = useState(null);
+  const [running, setRunning] = useState(false);
+  useEffect(() => {
+    if (!go1) { setPre(null); return; }
+    if (!go1.days || !go1.startDate) return;
+    let live = true;
+    const t = setTimeout(() => {
+      api("/promos/run-now", { method: "POST", body: { promo: go1.x.promo, startDate: go1.startDate, days: go1.days, dryRun: true } })
+        .then((r) => live && setPre(r)).catch((e) => live && setPre({ blocked: e.message, warnings: [] }));
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [go1]);
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const r = await api("/promos/run-now", { method: "POST", body: { promo: go1.x.promo, startDate: go1.startDate, days: go1.days } });
+      fireConfetti();
+      toast(r.resultStatus === "running" ? "Promo langsung Running" : r.resultStatus === "approved" ? `Promo disetujui, mulai ${fmtDate(r.periodStart)}` : "Promo diajukan ke Finance");
+      setGo1(null); reload(); go(`/promo/${r.promo.id}`);
+    } catch (e) { toast(e.message, "bad"); } finally { setRunning(false); }
   };
   const saveDraft = async (x) => {
     try { const p = await api("/promos", { method: "POST", body: x.promo }); toast("Tersimpan sebagai draft"); reload(); go(`/promo/${p.id}`); }
@@ -114,7 +138,8 @@ export default function Recommend({ st, reload }) {
                     {x.result.durationAdvice && <Kv k="Durasi saran" v={`${x.result.durationAdvice.rec} hari (${x.result.durationAdvice.min}–${x.result.durationAdvice.max})`} />}
                   </div>
                   <div className="flex flex-wrap gap-2 mt-3">
-                    <button className="btn-primary" onClick={() => open(x)}><ArrowUpRight size={18} />Buka di kalkulator</button>
+                    <button className="btn-primary" onClick={() => setGo1({ x, startDate: todayStr, days: x.result.durationAdvice?.rec || 7 })}><Play size={18} />{isHead ? "Jalankan sekarang" : "Ajukan sekarang"}</button>
+                    <button className="btn-ghost" onClick={() => open(x)}><ArrowUpRight size={18} />Buka di kalkulator</button>
                     <button className="btn-ghost" onClick={() => saveDraft(x)}><Save size={18} />Simpan draft</button>
                   </div>
                 </div>
@@ -127,6 +152,38 @@ export default function Recommend({ st, reload }) {
           ))}
         </AnimatePresence>
       </section>
+
+      <Sheet open={!!go1} onClose={() => setGo1(null)} title={isHead ? "Jalankan promo ini?" : "Ajukan promo ini?"}>
+        {go1 && (
+          <div className="space-y-3">
+            <div className="rounded-2xl bg-cream/70 px-3 py-2.5">
+              <div className="font-extrabold leading-snug">{go1.x.promo.nama}</div>
+              <div className="text-[13px] text-ink/65 mt-0.5">{prof?.label} · {go1.x.promo.areas?.[0] === "jakarta" ? "Jabodetabek" : "Bandung Raya"} · CM per unit {rp(go1.x.result.unit.cm)}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="lbl" htmlFor="rn-start">Mulai</label>
+                <input id="rn-start" type="date" className="field" min={todayStr} value={go1.startDate} onChange={(e) => setGo1({ ...go1, startDate: e.target.value })} /></div>
+              <div><label className="lbl">Durasi</label><NumInput suffix="hari" value={go1.days} onChange={(v) => setGo1({ ...go1, days: v })} /></div>
+            </div>
+            {go1.x.result.durationAdvice && <div className="text-[12.5px] text-ink/60">Durasi saran {go1.x.result.durationAdvice.rec} hari (wajar {go1.x.result.durationAdvice.min}–{go1.x.result.durationAdvice.max}).</div>}
+            {pre && !pre.blocked && (
+              <div className="rounded-2xl border border-line px-3 py-2.5 text-[14px]">
+                <div><b>{fmtDate(pre.periodStart)} – {fmtDate(pre.periodEnd)}</b> · {pre.days} hari · Gate {pre.gate}</div>
+                <div className="text-ink/70 mt-0.5">{pre.resultStatus === "running" ? "Status langsung Running, tanpa review Finance. Tercatat di Riwayat atas nama Anda."
+                  : pre.resultStatus === "approved" ? `Status Approved dan otomatis Running pada ${fmtDate(pre.periodStart)}, tanpa review Finance.`
+                  : "Promo dibuat dan langsung masuk Review Finance, lalu approval Marketing Manager."}</div>
+              </div>
+            )}
+            {pre?.blocked && <div className="rounded-2xl bg-blush text-bata px-3 py-2.5 text-[14px] font-semibold">{pre.blocked}</div>}
+            {pre?.warnings?.map((w, i) => (
+              <div key={i} className="flex gap-2 rounded-2xl bg-[#F6E7C8] px-3 py-2 text-[13px]"><TriangleAlert size={16} className="shrink-0 mt-0.5 text-[#8A5A12]" /><span>{w}</span></div>
+            ))}
+            <button className="btn-primary w-full" onClick={runNow} disabled={running || !pre || !!pre.blocked || !go1.days}>
+              <Play size={18} />{running ? "Memproses…" : !isHead ? "Ajukan ke Finance" : pre?.resultStatus === "approved" ? "Setujui & jadwalkan" : "Jalankan sekarang"}</button>
+            <button className="btn-ghost w-full" onClick={() => setGo1(null)}>Batal</button>
+          </div>
+        )}
+      </Sheet>
     </div>
   );
 }

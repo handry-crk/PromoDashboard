@@ -7,7 +7,7 @@ import { NumInput } from "./Calculator";
 import { go } from "../App";
 
 const FLOW = ["draft", "review_finance", "review_head", "approved", "running", "done"];
-const ACT = { create: "Dibuat", recalc: "Dihitung ulang", submit: "Diajukan ke Finance", review_ok: "Lolos review Finance", return: "Dikembalikan Finance",
+const ACT = { run_direct: "Dijalankan langsung oleh Manager", create: "Dibuat", recalc: "Dihitung ulang", submit: "Diajukan ke Finance", review_ok: "Lolos review Finance", return: "Dikembalikan Finance",
   approve: "Disetujui Marketing Manager", reject: "Ditolak", actual_input: "Hasil aktual diisi", edit: "Diubah" };
 
 export default function PromoDetail({ st, reload, id }) {
