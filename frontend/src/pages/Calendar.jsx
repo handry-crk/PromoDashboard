@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ChevronLeft, ChevronRight, AlertTriangle, Plus, CalendarDays, Rows3, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, Plus, CalendarDays, Rows3, Trash2, Sparkles } from "lucide-react";
 import { api, STATUS, CH_LABEL, fmtDate } from "../lib";
 import { Title, Loader, Sheet, useToast, Badge } from "../ui";
 import { go } from "../App";
@@ -74,13 +74,16 @@ export default function Calendar({ st }) {
   return (
     <div className="space-y-4">
       <Title a="Kalender" b="promo" sub="Jadwal promo, momen penting, dan bentrok antar promo"
-        right={<div className="flex gap-1 p-1 rounded-full bg-paper border border-line">
+        right={<div className="flex flex-wrap items-center gap-2">
+          {!(!st.user.isAdmin && st.user.perm === "viewer") && <a href="#/rencana" className="btn-primary !min-h-[40px] !text-[13px]"><Sparkles size={15} />Rencana 3 bulan</a>}
+          <div className="flex gap-1 p-1 rounded-full bg-paper border border-line">
           {[["bulan", "Bulan", CalendarDays], ["timeline", "Timeline", Rows3]].map(([k, l, I]) => (
             <button key={k} onClick={() => setView(k)} className={`relative h-9 px-3 rounded-full text-[13px] font-bold flex items-center gap-1 ${view === k ? "text-cream" : "text-ink/70"}`}>
               {view === k && <motion.span layoutId="calview" className="absolute inset-0 rounded-full bg-ink" />}
               <I size={15} className="relative" /><span className="relative hidden sm:inline">{l}</span>
             </button>
           ))}
+          </div>
         </div>} />
 
       <div className="flex flex-wrap items-center gap-2">

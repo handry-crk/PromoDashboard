@@ -467,3 +467,52 @@ def test_audit_filters_by_kind_name_date():
     y = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
     assert c.get(f"/api/audit?date_to={y}", headers=H(ha)).json()["total"] == 0
     assert c.get("/api/audit?date_from=ngawur", headers=H(ha)).status_code == 400
+
+
+def test_three_month_plan():
+    from datetime import date, timedelta
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    d = c.post("/api/plan", headers=H(ha), json={"platformProfileId": "gofood"}).json()
+    items = d["items"]
+    assert len(items) >= 4 and {x["area"] for x in items} == {"bandung", "jakarta"}
+    D = date.fromisoformat
+    for x in items:
+        assert x["result"]["gate"] != "HOLD" and x["result"]["unit"]["cm"] > 0 and x["promo"]["platformProfileId"] == "gofood"
+        assert D(x["promo"]["periodStart"]) >= date.today() + timedelta(days=7) and D(x["promo"]["periodStart"]) <= D(d["to"])
+    # one main promo per area at a time; same product at least 14 days apart
+    for area in ("bandung", "jakarta"):
+        lst = sorted((x for x in items if x["area"] == area), key=lambda x: x["promo"]["periodStart"])
+        for a, b in zip(lst, lst[1:]):
+            assert D(b["promo"]["periodStart"]) > D(a["promo"]["periodEnd"])
+        for i, a in enumerate(lst):
+            pa = {it["productId"] for it in a["promo"]["items"]}
+            for b in lst[i + 1:]:
+                if pa & {it["productId"] for it in b["promo"]["items"]}:
+                    assert (D(b["promo"]["periodStart"]) - D(a["promo"]["periodEnd"])).days >= 14
+    # does not overwrite a scheduled promo (Mozza Duo on gerobak until 31 Dec)
+    g = c.post("/api/plan", headers=H(ha), json={"platformProfileId": "offline_gerobak"}).json()
+    busy = [(D(e["periodStart"]), D(e["periodEnd"]), e["area"]) for e in g["existing"]]
+    assert busy
+    for x in g["items"]:
+        for a, b, ar in busy:
+            assert ar != x["area"] or D(x["promo"]["periodStart"]) > b or D(x["promo"]["periodEnd"]) < a
+    # marketplace is national: one track
+    assert {x["areaLabel"] for x in c.post("/api/plan", headers=H(ha), json={"platformProfileId": "shopee"}).json()["items"]} == {"Nasional"}
+    # a plan item can be saved as a draft as-is
+    p = c.post("/api/promos", headers=H(ha), json=items[0]["promo"]).json()
+    assert p["status"] == "draft" and p["periodStart"] == items[0]["promo"]["periodStart"]
+    # guards
+    assert c.post("/api/plan", headers=H(ha), json={"platformProfileId": "event_konser"}).status_code == 400
+    assert c.post("/api/plan", headers=H(ha), json={}).status_code == 400
+    r = c.post("/api/members", headers=H(ha), json={"name": "Vina", "email": "vina@citarasakuliner.com", "role": "viewer"}).json()
+    tv = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "9999"}).json()["token"]
+    assert c.post("/api/plan", headers=H(tv), json={"platformProfileId": "gofood"}).status_code == 403
+    # bot
+    b = c.post("/api/bot", headers=H(ha), json={"message": "buatkan rencana promo 3 bulan ke depan"}).json()
+    assert b["context"]["intent"] == "plan" and b["chips"] and "link" not in b
+    b = c.post("/api/bot", headers=H(ha), json={"message": "rencana promo 3 bulan ke depan untuk gofood"}).json()
+    assert b["link"]["to"] == "/rencana" and b["link"]["platformProfileId"] == "gofood" and "promo**" in b["reply"]
+    assert "link" not in c.post("/api/bot", headers=H(tv), json={"message": "rencana promo 3 bulan ke depan untuk gofood"}).json()

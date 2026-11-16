@@ -17,6 +17,7 @@ import CalendarPage from "./pages/Calendar";
 import Assistant, { BotFace } from "./pages/Assistant";
 import Learning from "./pages/Learning";
 import HistoryPage from "./pages/History";
+import Plan from "./pages/Plan";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -83,6 +84,7 @@ function Main() {
     case "/kalender": page = <CalendarPage {...props} />; break;
     case "/asisten": page = <Assistant {...props} />; break;
     case "/belajar": page = <Learning {...props} />; break;
+    case "/rencana": page = <Plan {...props} />; break;
     case "/riwayat": page = <HistoryPage {...props} />; break;
     case "/library": page = <Library {...props} />; break;
     case "/promo": page = <PromoDetail key={arg} {...props} id={arg} />; break;
@@ -95,10 +97,10 @@ function Main() {
   const HIDE = viewer ? ["/hitung", "/rekomendasi", "/settings", "/riwayat"] : [];
   const nav = NAV.filter((n) => !HIDE.includes(n.to));
   const moreNav = MORE.filter((n) => !HIDE.includes(n.to));
-  if (viewer && ["/hitung", "/rekomendasi", "/riwayat"].includes(path)) {
+  if (viewer && ["/hitung", "/rekomendasi", "/riwayat", "/rencana"].includes(path)) {
     page = <div className="card p-6 text-[15px]">Halaman ini hanya untuk tim yang menghitung promo. Sebagai Viewer, Anda bisa melihat promo di Library dan Kalender.</div>;
   }
-  const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo"));
+  const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo") || (to === "/kalender" && path === "/rencana"));
 
   return (
     <div className="min-h-screen pb-24 xl:pb-10 overflow-x-clip">

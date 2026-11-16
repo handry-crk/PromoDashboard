@@ -7,6 +7,7 @@ import { go } from "../App";
 
 const STORE = "crk_bot_chat";
 const SUGGEST = [
+  "Buatkan rencana promo 3 bulan ke depan untuk GoFood",
   "Promo apa yang cocok di gerobak untuk naikkan AOV?",
   "Rekomendasi promo GoFood Jakarta untuk trial, diskon maks 30%",
   "Kapan promo AOV mozza di GoFood 2 minggu bulan depan?",
@@ -151,7 +152,7 @@ export default function Assistant({ st, reload }) {
       const r = await api("/bot", { method: "POST", body: { message, context: ctx, set, promoId, prefill } });
       await new Promise((ok) => setTimeout(ok, Math.max(0, 650 - (Date.now() - t0))));
       setCtx(r.context);
-      setMsgs((m) => [...m, { from: "bot", text: r.reply, result: r.result, promos: r.promos, chips: r.chips, ctx: r.context }]);
+      setMsgs((m) => [...m, { from: "bot", text: r.reply, result: r.result, promos: r.promos, link: r.link, chips: r.chips, ctx: r.context }]);
     } catch (e) { setMsgs((m) => [...m, { from: "bot", text: e.message, error: true }]); }
     finally { setBusy(false); }
   };
@@ -237,6 +238,10 @@ export default function Assistant({ st, reload }) {
                   <div className="mt-3 space-y-2">
                     {m.promos.map((c, k) => <PromoCard key={c.promo.nama + k} c={c} i={k} onOpen={openPromo} onSave={savePromo} canSave={canSave} />)}
                   </div>
+                )}
+                {m.link && (
+                  <button className="btn-primary mt-3 !min-h-[38px] !text-[13px]" onClick={() => { sessionStorage.setItem("crk_plan_platform", m.link.platformProfileId || ""); go(m.link.to); }}>
+                    <CalendarDays size={15} />{m.link.label}</button>
                 )}
                 {m.chips?.length > 0 && i === msgs.length - 1 && (
                   <div className="flex flex-wrap gap-1.5 mt-3">

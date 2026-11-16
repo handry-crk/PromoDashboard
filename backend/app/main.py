@@ -1763,7 +1763,7 @@ def clean_ctx(ctx: dict) -> dict:
                 out.pop(k)
     if out.get("mechanism") not in E.MECHANISMS:
         out.pop("mechanism", None)
-    if out.get("intent") not in ("what", "when"):
+    if out.get("intent") not in ("what", "when", "plan"):
         out.pop("intent", None)
     try:
         out["maxDiscountPct"] = max(5, min(50, int(float(out["maxDiscountPct"]))))
@@ -1773,6 +1773,38 @@ def clean_ctx(ctx: dict) -> dict:
 
 
 AREA_LABEL = {"bandung": "Bandung Raya", "jakarta": "Jabodetabek"}
+
+
+def bot_plan(ctx: dict, profs: dict, user: dict) -> dict:
+    """Jawaban bot untuk 'rencana promo 3 bulan ke depan'."""
+    back = [{"label": "Promo apa yang cocok?", "set": {"intent": "what"}}, {"label": "Kapan waktu terbaiknya?", "set": {"intent": "when"}}]
+    if is_viewer(user):
+        return {"context": ctx, "reply": "Rencana promo memuat angka margin, jadi hanya untuk tim yang menghitung promo.", "chips": back[1:]}
+    prof = profs.get(ctx.get("platformProfileId"))
+    if not prof or prof.get("channelType") == "event":
+        return {"context": ctx, "reply": "Rencana 3 bulan mau disusun untuk channel mana? (Event dihitung terpisah di kalkulator event.)",
+                "chips": [{"label": p["label"], "set": {"platformProfileId": p["id"]}} for p in profs.values()
+                          if p.get("channelType") != "event" and not p["label"].endswith("(lama)")]}
+    areas = [a for a in (ctx.get("areas") or []) if a in AREA_LABEL] or ["bandung", "jakarta"]
+    plan = build_plan(prof, areas, 91, ctx.get("maxDiscountPct") or 20, user)
+    items = plan["items"]
+    if not items:
+        return {"context": ctx, "chips": back + [{"label": "Ganti channel", "set": {"platformProfileId": None}}],
+                "reply": f"Belum ada promo yang lolos untuk {prof['label']} dalam 3 bulan ke depan dengan diskon maksimal {plan['maxDiscountPct']}%."}
+    lines = [f"Rencana promo {prof['label']} untuk 3 bulan ke depan ({T.fmt_range(date.fromisoformat(plan['from']), date.fromisoformat(plan['to']))}): "
+             f"**{len(items)} promo**."]
+    by_m = {}
+    for x in items:
+        by_m.setdefault(x["monthLabel"], []).append(x)
+    for m, lst in by_m.items():
+        lines.append(f"**{m}**: " + "; ".join(f"{x['range']} ({x['areaLabel']}) {x['promo']['nama']} — CM {E.rp(x['result']['unit']['cm'])}" for x in lst) + ".")
+    if plan["existing"]:
+        lines.append("Promo yang sudah terjadwal tidak saya timpa: " + "; ".join(sorted({f"{e['nama']} ({e['range']})" for e in plan["existing"]})) + ".")
+    lines.append("Aturan: " + "; ".join(plan["rules"][:3]).lower() + ". Bulan kedua dan ketiga sebaiknya dihitung ulang tiap bulan.")
+    if not plan["learning"]["active"]:
+        lines.append(f"Catatan: baru ada {plan['learning']['n']} hasil promo untuk channel ini, jadi waktu masih memakai asumsi awal.")
+    return {"context": ctx, "reply": "\n\n".join(lines), "link": {"to": "/rencana", "label": "Buka rencana 3 bulan", "platformProfileId": prof["id"]},
+            "chips": back + [{"label": "Ganti channel", "set": {"platformProfileId": None}}]}
 
 
 def bot_what(ctx: dict, profs: dict, user: dict) -> dict:
@@ -1865,6 +1897,142 @@ def run_timing(ctx: dict):
     return res
 
 
+PLAN_OBJECTIVES = {"offline": ["aov", "trial", "jam_sepi", "repeat"], "online_food": ["online", "aov", "trial"],
+                   "marketplace": ["online", "trial"]}
+PLAN_GAP_DAYS = 3          # jeda antar promo utama di channel + area yang sama
+PLAN_SAME_PRODUCT_GAP = 14  # jeda minimal untuk produk yang sama
+PLAN_BUSY = ("approved", "running", "review_finance", "review_head")
+
+
+def build_plan(prof: dict, areas: list, days: int, max_disc: int, user: dict) -> dict:
+    """Rencana promo ke depan untuk satu channel: 1 promo utama per area dalam satu waktu, produk sama berjeda ≥ 14 hari."""
+    s = get_settings()
+    ch = prof.get("channelType")
+    objs = PLAN_OBJECTIVES.get(ch)
+    if not objs:
+        raise ValueError("Rencana 3 bulan belum tersedia untuk channel event. Gunakan kalkulator event.")
+    t0 = today()
+    h_start, h_end = t0 + timedelta(days=7), t0 + timedelta(days=days)
+    rows_all = promo_rows()
+    items, existing = [], []
+    national = ch == "marketplace"      # marketplace berlaku nasional: satu rencana, bukan per area
+    if national:
+        areas = areas[:1]
+    gap_days = 7 if national else PLAN_GAP_DAYS
+    for area in areas:
+        busy = sorted((date.fromisoformat(r["periodStart"]), date.fromisoformat(r["periodEnd"]), r) for r in rows_all
+                      if r["platformProfileId"] == prof["id"] and area in r["areas"] and r["effectiveStatus"] in PLAN_BUSY
+                      and date.fromisoformat(r["periodEnd"]) >= t0)
+        for a, b, r in busy:
+            if a <= h_end:
+                existing.append({"id": r["id"], "nama": r["nama"], "area": area, "periodStart": r["periodStart"], "periodEnd": r["periodEnd"],
+                                 "status": r["effectiveStatus"], "range": T.fmt_range(a, b)})
+        cache = {}
+
+        def cands(obj):
+            if obj not in cache:
+                try:
+                    cache[obj] = recommend_core({"platformProfileId": prof["id"], "objective": obj, "area": area, "maxDiscountPct": max_disc},
+                                                prof, s, area, top=5)
+                except E.CalcError:
+                    cache[obj] = []
+            return cache[obj]
+
+        cursor, i, last = h_start, 0, {}   # last: productId -> end date in this plan
+        prev_mech = None
+        used = set()
+        guard = 0
+        while cursor <= h_end and guard < 12:
+            guard += 1
+            obj = objs[i % len(objs)]
+            pool = cands(obj)
+            if not pool:
+                i += 1
+                if i > len(objs) * 2 and not items:
+                    break
+                if all(not cands(o) for o in objs):
+                    break
+                continue
+
+            def ok(x, level):
+                pids = {it.get("productId") for it in x["promo"].get("items") or []}
+                if any(pid in last and (cursor - last[pid]).days < PLAN_SAME_PRODUCT_GAP for pid in pids):
+                    return False
+                if level >= 2 and pids & used:          # utamakan produk yang belum dipromokan di rencana ini
+                    return False
+                return level < 1 or x["promo"]["mechanism"] != prev_mech
+
+            pick = next((x for lv in (2, 1, 0) for x in pool if ok(x, lv)), None)
+            if not pick:
+                cursor += timedelta(days=7)
+                i += 1
+                continue
+            adv = pick["result"].get("durationAdvice") or {}
+            dur = int(adv.get("rec") or 7)
+            pids = sorted({it.get("productId") for it in pick["promo"].get("items") or [] if it.get("productId")})
+            start = end = None
+            for _ in range(6):
+                try:
+                    tr = run_timing({"platformProfileId": prof["id"], "objective": obj, "duration": dur, "areas": [area], "products": pids,
+                                     "mechanism": pick["promo"]["mechanism"], "from": cursor.isoformat(),
+                                     "to": (cursor + timedelta(days=10)).isoformat()})
+                    best = next((r for r in tr.get("recommendations") or [] if date.fromisoformat(r["start"]) >= cursor), None)
+                except HTTPException:
+                    best = None
+                st_ = date.fromisoformat(best["start"]) if best else cursor
+                en_ = st_ + timedelta(days=dur - 1)
+                clash = next(((a, b) for a, b, _r in busy if a <= en_ and b >= st_), None)
+                if clash:
+                    cursor = clash[1] + timedelta(days=gap_days + 1)
+                    continue
+                start, end = st_, en_
+                break
+            if start is None or start > h_end:
+                break
+            promo = copy.deepcopy(pick["promo"])
+            promo.update({"periodStart": start.isoformat(), "periodEnd": end.isoformat(), "areas": [area]})
+            items.append({"key": f"{prof['id']}-{area}-{start.isoformat()}", "platformProfileId": prof["id"], "platformLabel": prof["label"],
+                          "channelType": ch, "area": area, "areaLabel": "Nasional" if national else AREA_LABEL.get(area, area), "objective": obj,
+                          "objectiveLabel": E.OBJECTIVES.get(obj, obj), "mechanismLabel": E.MECHANISMS.get(promo["mechanism"]),
+                          "month": start.strftime("%Y-%m"), "monthLabel": f"{T.BULAN[start.month - 1]} {start.year}",
+                          "range": T.fmt_range(start, end), "days": dur, "promo": promo, "reason": pick.get("reason"),
+                          "timing": ({"reasons": best.get("reasons") or [], "cautions": best.get("cautions") or [],
+                                      "startDay": best.get("startDay")} if best else None),
+                          "result": {k: pick["result"].get(k) for k in ("unit", "health", "margin", "menarik", "gate", "quadrant", "durationAdvice")}})
+            for pid in pids:
+                last[pid] = end
+            used.update(pids)
+            prev_mech = promo["mechanism"]
+            cursor = end + timedelta(days=gap_days + 1)
+            i += 1
+    items.sort(key=lambda x: (x["promo"]["periodStart"], x["area"]))
+    ln = T.learn(timing_history(), ch)
+    return {"platformProfileId": prof["id"], "platformLabel": prof["label"], "channelType": ch, "from": h_start.isoformat(), "to": h_end.isoformat(),
+            "items": items, "existing": existing, "maxDiscountPct": max_disc,
+            "learning": {"active": bool(ln.get("active")), "n": ln.get("n", 0)},
+            "rules": [f"1 promo utama per channel per area dalam satu waktu, jeda {gap_days} hari antar promo",
+                      f"Produk yang sama berjeda minimal {PLAN_SAME_PRODUCT_GAP} hari", f"Diskon maksimal {max_disc}%",
+                      "Hanya promo yang tetap untung setelah HPP dan potongan platform",
+                      "Promo yang sudah Approved, Running, atau sedang direview tidak ditimpa"]}
+
+
+@app.post("/api/plan")
+def api_plan(body: dict, user=Depends(no_viewer)):
+    prof = profiles_map().get(body.get("platformProfileId"))
+    if not prof:
+        err(400, "Pilih platform/channel.")
+    areas = [a for a in (body.get("areas") or ["bandung", "jakarta"]) if a in AREA_LABEL] or ["bandung"]
+    try:
+        months = max(1, min(int(body.get("months") or 3), 3))
+        max_disc = max(5, min(50, int(body.get("maxDiscountPct") or 20)))
+    except (TypeError, ValueError):
+        err(400, "Angka tidak valid.")
+    try:
+        return build_plan(prof, areas, months * 30 + 1, max_disc, user)
+    except ValueError as e:
+        err(400, str(e))
+
+
 @app.post("/api/timing")
 def api_timing(body: dict, user=Depends(current_user)):
     return run_timing(body)
@@ -1921,6 +2089,8 @@ def api_bot(body: dict, user=Depends(current_user)):
     ctx = clean_ctx(ctx)
     if ctx.get("platformProfileId") not in profs:
         ctx.pop("platformProfileId", None)
+    if ctx.get("intent") == "plan":
+        return bot_plan(ctx, profs, user)
     need = T.missing(ctx)
     if need:
         if "platform" in need:
