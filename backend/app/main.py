@@ -925,7 +925,8 @@ def update_promo(pid: str, body: dict, user=Depends(require("planner", "channel_
 @app.delete("/api/promos/{pid}")
 def delete_promo(pid: str, user=Depends(require("head"))):
     p = db.promos.find_one({"id": pid}) or {}
-    audit(user, "promo", "Menghapus promo", f"{p.get('kode', pid)} {p.get('nama', '')}".strip())
+    audit(user, "promo", "Menghapus promo", f"{p.get('kode', pid)} {p.get('nama', '')}".strip(),
+          f"Status {p.get('status', '-')}; periode {p.get('periodStart', '-')} s.d. {p.get('periodEnd', '-')}; dibuat {p.get('createdBy', '-')}")
     db.promos.delete_one({"id": pid})
     return {"ok": True}
 
@@ -1037,6 +1038,8 @@ def comment_promo(pid: str, body: dict, user=Depends(current_user)):
     if not (body.get("text") or "").strip():
         err(400, "Tulis komentar dulu.")
     db.comments.insert_one({"promoId": pid, "byId": user["id"], "byName": user["name"], "at": now_iso(), "text": body["text"]})
+    pc_ = db.promos.find_one({"id": pid}) or {}
+    audit(user, "promo", "Menambah komentar", f"{pc_.get('kode', pid)} {pc_.get('nama', '')}".strip(), body["text"][:200])
     return get_promo(pid, user)
 
 
@@ -1301,21 +1304,67 @@ AUDIT_CATS = {"promo": "Promo", "produk": "Produk & HPP", "platform": "Biaya pla
               "belajar": "Data belajar", "kalender": "Kalender", "file": "File & import"}
 
 
+AUDIT_KINDS = {"tambah": "Tambah", "ubah": "Ubah", "hapus": "Hapus", "lain": "Lainnya"}
+WIB = timezone(timedelta(hours=7))
+
+
+def audit_kind(action: str) -> str:
+    """Kelompokkan aksi menjadi tambah / ubah / hapus supaya riwayat bisa difilter."""
+    a = (action or "").lower()
+    if a.startswith(("menghapus", "membatalkan")):
+        return "hapus"
+    if a.startswith("membuat ulang"):
+        return "ubah"
+    if a.startswith(("menambah", "membuat", "mengimport", "menduplikat", "mendaftar")):
+        return "tambah"
+    if a.startswith(("mengubah", "mereset", "memvalidasi", "mengisi", "mengaktifkan", "menyetujui", "menolak", "mengajukan",
+                     "mengembalikan", "meloloskan", "menjalankan")):
+        return "ubah"
+    return "lain"
+
+
 @app.get("/api/audit")
-def list_audit(category: str = "", by: str = "", q: str = "", limit: int = 200, user=Depends(no_viewer)):
+def list_audit(category: str = "", by: str = "", q: str = "", kind: str = "", date_from: str = "", date_to: str = "",
+               limit: int = 200, user=Depends(no_viewer)):
     flt = {}
     if category in AUDIT_CATS:
         flt["category"] = category
     if by:
         flt["byId"] = by
-    rows = clean(list(db.audit.find(flt).sort("at", -1).limit(max(1, min(int(limit), 500)) * (3 if q else 1))))
+    rng = {}
+    try:
+        if date_from:
+            rng["$gte"] = datetime.combine(date.fromisoformat(date_from), datetime.min.time(), WIB).astimezone(timezone.utc).isoformat()
+        if date_to:
+            rng["$lt"] = datetime.combine(date.fromisoformat(date_to) + timedelta(days=1), datetime.min.time(), WIB).astimezone(timezone.utc).isoformat()
+    except ValueError:
+        err(400, "Format tanggal tidak valid.")
+    if rng:
+        flt["at"] = rng
+    rows = clean(list(db.audit.find(flt).sort("at", -1).limit(5000)))
+    for r in rows:
+        r["kind"] = audit_kind(r.get("action"))
+        try:
+            t = datetime.fromisoformat(r["at"]).astimezone(WIB)
+            r["tanggal"], r["jam"] = t.strftime("%Y-%m-%d"), t.strftime("%H:%M:%S")
+        except Exception:
+            r["tanggal"], r["jam"] = "", ""
+    if kind in AUDIT_KINDS:
+        rows = [r for r in rows if r["kind"] == kind]
     if q:
         ql = q.lower()
         rows = [r for r in rows if ql in f"{r.get('action','')} {r.get('target','')} {r.get('detail','')} {r.get('byName','')} {r.get('file') or ''}".lower()]
-    rows = rows[:max(1, min(int(limit), 500))]
+    summary = {}
+    for r in rows:
+        srow = summary.setdefault(r.get("byId") or r.get("byName"), {"id": r.get("byId"), "name": r.get("byName"), "role": r.get("role"),
+                                                                    "tambah": 0, "ubah": 0, "hapus": 0, "lain": 0, "last": r["at"]})
+        srow[r["kind"]] += 1
+    total = len(rows)
+    rows = rows[:max(1, min(int(limit), 1000))]
     people = sorted({(r.get("byId"), r.get("byName")) for r in clean(list(db.audit.find({}, {"byId": 1, "byName": 1}))) if r.get("byId")},
                     key=lambda x: x[1] or "")
-    return {"rows": rows, "categories": AUDIT_CATS, "people": [{"id": a, "name": b} for a, b in people], "total": db.audit.count_documents(flt)}
+    return {"rows": rows, "categories": AUDIT_CATS, "kinds": AUDIT_KINDS, "people": [{"id": a, "name": b} for a, b in people],
+            "summary": sorted(summary.values(), key=lambda x: -(x["tambah"] + x["ubah"] + x["hapus"] + x["lain"])), "total": total}
 
 
 SETUP_DAYS = int(os.getenv("SETUP_DAYS", "14"))

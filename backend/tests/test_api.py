@@ -435,3 +435,35 @@ def test_finance_cost_control_pricing_approval():
     # changing the price after approval sends it back and drops the pricing approval
     v = c.put(f"/api/promos/{pid}", headers=H(pl), json={"params": {"discountPct": 25}}).json()
     assert v["status"] == "draft" and not v.get("pricingApproval")
+
+
+def test_audit_filters_by_kind_name_date():
+    from datetime import date, timedelta
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    r = c.post("/api/members", headers=H(ha), json={"name": "Galuh", "email": "galuh@citarasakuliner.com", "role": "revenue_growth"}).json()
+    tg = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "5678"}).json()["token"]
+    st = c.get("/api/state", headers=H(ha)).json()
+    p = st["products"][0]
+    c.put(f"/api/products/{p['id']}", headers=H(tg), json={"hpp": p["hpp"] + 50})                      # ubah (Galuh)
+    c.post("/api/products", headers=H(tg), json={"nama": "Produk Baru", "hpp": 4000, "prices": {"bandung": 10000, "jakarta": 11000}})  # tambah
+    pid = st["promos"][0]["id"]
+    c.post(f"/api/promos/{pid}/comments", headers=H(tg), json={"text": "cek HPP"})
+    assert c.delete(f"/api/promos/{pid}", headers=H(ha)).status_code == 200                          # hapus (Handry)
+    a = c.get("/api/audit", headers=H(ha)).json()
+    assert all(x["kind"] in a["kinds"] and len(x["tanggal"]) == 10 and len(x["jam"]) == 8 for x in a["rows"])
+    hapus = c.get("/api/audit?kind=hapus", headers=H(ha)).json()["rows"]
+    assert hapus and all(x["kind"] == "hapus" for x in hapus) and hapus[0]["byName"] == "Handry" and "Status" in hapus[0]["detail"]
+    gid = next(x["id"] for x in a["people"] if x["name"] == "Galuh")
+    g = c.get(f"/api/audit?by={gid}&kind=ubah", headers=H(ha)).json()
+    assert g["rows"] and all(x["byName"] == "Galuh" and x["kind"] == "ubah" for x in g["rows"])
+    assert any(x["action"] == "Menambah komentar" for x in c.get(f"/api/audit?by={gid}&kind=tambah", headers=H(ha)).json()["rows"])
+    sm = {x["name"]: x for x in a["summary"]}
+    assert sm["Handry"]["hapus"] == 1 and sm["Galuh"]["ubah"] >= 1 and sm["Galuh"]["tambah"] >= 2
+    today = a["rows"][0]["tanggal"]
+    assert c.get(f"/api/audit?date_from={today}&date_to={today}", headers=H(ha)).json()["total"] == a["total"]
+    y = (date.fromisoformat(today) - timedelta(days=1)).isoformat()
+    assert c.get(f"/api/audit?date_to={y}", headers=H(ha)).json()["total"] == 0
+    assert c.get("/api/audit?date_from=ngawur", headers=H(ha)).status_code == 400
