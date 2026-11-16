@@ -177,7 +177,7 @@ export default function Recommend({ st, reload }) {
                 <div><b>{fmtDate(pre.periodStart)} – {fmtDate(pre.periodEnd)}</b> · {pre.days} hari · Gate {pre.gate}</div>
                 <div className="text-ink/70 mt-0.5">{pre.resultStatus === "running" ? "Status langsung Running, tanpa review Finance. Tercatat di Riwayat atas nama Anda."
                   : pre.resultStatus === "approved" ? `Status Approved dan otomatis Running pada ${fmtDate(pre.periodStart)}, tanpa review Finance.`
-                  : "Promo dibuat dan langsung masuk Review Finance, lalu approval Marketing Manager."}</div>
+                  : "Promo dibuat dan langsung masuk review pricing Finance / Cost Control, lalu keputusan Marketing Manager."}</div>
               </div>
             )}
             {pre?.blocked && <div className="rounded-2xl bg-blush text-bata px-3 py-2.5 text-[14px] font-semibold">{pre.blocked}</div>}
@@ -185,7 +185,7 @@ export default function Recommend({ st, reload }) {
               <div key={i} className="flex gap-2 rounded-2xl bg-[#F6E7C8] px-3 py-2 text-[13px]"><TriangleAlert size={16} className="shrink-0 mt-0.5 text-[#8A5A12]" /><span>{w}</span></div>
             ))}
             <button className="btn-primary w-full" onClick={runNow} disabled={running || !pre || !!pre.blocked || !go1.days}>
-              <Play size={18} />{running ? "Memproses…" : !isHead ? "Ajukan ke Finance" : pre?.resultStatus === "approved" ? "Setujui & jadwalkan" : "Jalankan sekarang"}</button>
+              <Play size={18} />{running ? "Memproses…" : !isHead ? "Ajukan ke Finance / Cost Control" : pre?.resultStatus === "approved" ? "Setujui & jadwalkan" : "Jalankan sekarang"}</button>
             <button className="btn-ghost w-full" onClick={() => setGo1(null)}>Batal</button>
           </div>
         )}

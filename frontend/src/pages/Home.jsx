@@ -62,6 +62,25 @@ export default function Home({ st, reload }) {
         </div>
       </motion.section>
 
+      {(() => {
+        const perm = st.user.perm;
+        const mine = promos.filter((p) => (perm === "finance" && p.status === "review_finance") || ((st.user.isAdmin || perm === "head") && p.status === "review_head"));
+        if (!mine.length) return null;
+        return (
+          <section className="card p-4 ring-2 ring-bata">
+            <div className="font-extrabold">{perm === "finance" ? "Menunggu review & approval pricing Anda" : "Menunggu keputusan Anda"} ({mine.length})</div>
+            <div className="mt-2 space-y-2">
+              {mine.map((p) => (
+                <a key={p.id} href={`#/promo/${p.id}`} className="flex items-center justify-between gap-3 rounded-2xl bg-blush px-3 py-2.5">
+                  <div className="min-w-0"><div className="font-bold truncate">{p.nama}</div>
+                    <div className="text-[12px] text-ink/60">{p.kode} · diajukan {p.createdBy}{p.pricingApproval ? ` · pricing disetujui ${p.pricingApproval.byName}` : ""}</div></div>
+                  <span className="btn-primary !min-h-[36px] !text-[13px] shrink-0">{perm === "finance" ? "Review pricing" : "Putuskan"}</span>
+                </a>
+              ))}
+            </div>
+          </section>
+        );
+      })()}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <Stat label="Promo running" value={running.length} />
         <Stat label="Rata-rata skor Sehat" value={avgHealth ?? "–"} tone={avgHealth >= 75 ? "ok" : avgHealth >= 50 ? "warn" : "bad"} />

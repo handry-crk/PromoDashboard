@@ -397,3 +397,41 @@ def test_bot_recommends_which_promo():
     tv = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "9999"}).json()["token"]
     v = c.post("/api/bot", headers=H(tv), json={"message": "promo apa yang cocok di gerobak untuk aov"}).json()
     assert "promos" not in v and "CM" not in v["reply"]
+
+
+def test_finance_cost_control_pricing_approval():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    def member(name, role, pin):
+        r = c.post("/api/members", headers=H(ha), json={"name": name, "email": f"{name.lower()}@citarasakuliner.com", "role": role}).json()
+        return c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": pin}).json()["token"]
+    fi, pl, vw = member("Fikri", "finance", "1111"), member("Kintan", "team_leader", "2222"), member("Vina", "viewer", "3333")
+    assert c.get("/api/state", headers=H(fi)).json()["roles"]["finance"] == "Finance / Cost Control"
+    p = c.post("/api/promos", headers=H(pl), json={"nama": "Tes Pricing", "objective": "aov", "mechanism": "diskon_persen", "platformProfileId": "offline_kios",
+               "areas": ["bandung"], "periodStart": "2026-12-01", "periodEnd": "2026-12-14", "items": [{"productId": "mix-mozza-ayam", "qty": 1}],
+               "params": {"discountPct": 10}}).json()
+    pid = p["id"]
+    assert c.post(f"/api/promos/{pid}/submit", headers=H(pl)).json()["status"] == "review_finance"
+    # planner and viewer cannot approve pricing; finance cannot give the final decision
+    assert c.post(f"/api/promos/{pid}/review", headers=H(pl), json={"decision": "approve"}).status_code == 403
+    assert c.post(f"/api/promos/{pid}/review", headers=H(vw), json={"decision": "approve"}).status_code == 403
+    # return needs a note and clears nothing yet
+    assert c.post(f"/api/promos/{pid}/review", headers=H(fi), json={"decision": "return"}).status_code == 400
+    v = c.post(f"/api/promos/{pid}/review", headers=H(fi), json={"decision": "approve", "note": "HPP sesuai"}).json()
+    a = v["pricingApproval"]
+    assert v["status"] == "review_head" and a["byName"] == "Fikri" and a["byRole"] == "Finance / Cost Control" and a["at"]
+    assert a["pricing"]["bandung"]["cm"] == v["results"]["bandung"]["unit"]["cm"] and a["pricing"]["bandung"]["hpp"]
+    assert c.post(f"/api/promos/{pid}/approve", headers=H(fi), json={"decision": "approve"}).status_code == 403
+    # viewer sees who approved but no HPP/CM
+    vv = c.get(f"/api/promos/{pid}", headers=H(vw)).json()
+    assert vv["pricingApproval"]["byName"] == "Fikri" and "pricing" not in vv["pricingApproval"]
+    assert all("pricing" not in (x.get("pricingApproval") or {}) for x in c.get("/api/state", headers=H(vw)).json()["promos"])
+    # recorded in change history
+    rows = c.get("/api/audit?category=promo", headers=H(fi)).json()["rows"]
+    assert any(r["action"] == "Menyetujui pricing promo" and r["byName"] == "Fikri" and "CM" in r["detail"] for r in rows)
+    assert c.post(f"/api/promos/{pid}/approve", headers=H(ha), json={"decision": "approve"}).json()["status"] == "approved"
+    # changing the price after approval sends it back and drops the pricing approval
+    v = c.put(f"/api/promos/{pid}", headers=H(pl), json={"params": {"discountPct": 25}}).json()
+    assert v["status"] == "draft" and not v.get("pricingApproval")

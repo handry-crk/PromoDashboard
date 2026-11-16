@@ -7,7 +7,7 @@ import { NumInput } from "./Calculator";
 import { go } from "../App";
 
 const FLOW = ["draft", "review_finance", "review_head", "approved", "running", "done"];
-const ACT = { run_direct: "Dijalankan langsung oleh Manager", create: "Dibuat", recalc: "Dihitung ulang", submit: "Diajukan ke Finance", review_ok: "Lolos review Finance", return: "Dikembalikan Finance",
+const ACT = { run_direct: "Dijalankan langsung oleh Manager", create: "Dibuat", recalc: "Dihitung ulang", submit: "Diajukan ke Finance / Cost Control", review_ok: "Pricing disetujui Finance / Cost Control", return: "Dikembalikan Finance / Cost Control",
   approve: "Disetujui Marketing Manager", reject: "Ditolak", actual_input: "Hasil aktual diisi", edit: "Diubah" };
 
 export default function PromoDetail({ st, reload, id }) {
@@ -55,12 +55,22 @@ export default function PromoDetail({ st, reload, id }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {can("planner", "channel_pic", "head") && p.status !== "done" && <a href={`#/hitung/${p.id}`} className="btn-ghost"><Pencil size={16} />Edit</a>}
-          {can("planner", "channel_pic", "head") && p.status === "draft" && <button className="btn-primary" onClick={() => call("submit", {}, "Diajukan ke Finance")}><Send size={16} />Ajukan review</button>}
-          {can("finance") && p.status === "review_finance" && <button className="btn-primary" onClick={() => setDlg("review")}><Check size={16} />Review margin</button>}
+          {can("planner", "channel_pic", "head") && p.status === "draft" && <button className="btn-primary" onClick={() => call("submit", {}, "Diajukan ke Finance / Cost Control")}><Send size={16} />Ajukan review</button>}
+          {can("finance") && p.status === "review_finance" && <button className="btn-primary" onClick={() => setDlg("review")}><Check size={16} />Review & approve pricing</button>}
           {can("head") && p.status === "review_head" && <button className="btn-primary" onClick={() => setDlg("approve")}><Check size={16} />Keputusan</button>}
           {u.isAdmin && <button className="btn-soft" onClick={del} aria-label="Hapus promo"><Trash2 size={16} /></button>}
         </div>
       </div>
+      {p.pricingApproval && !["draft", "review_finance"].includes(p.status) && (
+        <div className="flex items-start gap-1.5 rounded-2xl bg-[#DCE9DF] text-[#234F37] px-3 py-2 text-[13px] font-semibold w-fit max-w-full">
+          <Check size={15} className="shrink-0 mt-0.5" /><span>Pricing disetujui {p.pricingApproval.byName} ({p.pricingApproval.byRole}) · {new Date(p.pricingApproval.at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+        </div>
+      )}
+      {p.status === "review_finance" && (
+        <div className="rounded-2xl bg-[#F6E7C8] px-3 py-2.5 text-[14px]">
+          {can("finance") ? "Promo ini menunggu review dan approval pricing dari Anda." : "Menunggu review dan approval pricing dari Finance / Cost Control."}
+        </div>
+      )}
 
       {/* status flow */}
       <div className="card p-4">
@@ -193,11 +203,30 @@ export default function PromoDetail({ st, reload, id }) {
         </section>
       </div>
 
-      <Sheet open={!!dlg} onClose={() => setDlg(null)} title={dlg === "review" ? "Review margin (Finance)" : "Keputusan Marketing Manager"}>
+      <Sheet open={!!dlg} onClose={() => setDlg(null)} title={dlg === "review" ? "Review pricing (Finance / Cost Control)" : "Keputusan Marketing Manager"}>
+        {dlg === "review" && p.results && (
+          <div className="mb-3 space-y-2">
+            {Object.entries(p.results).map(([a, o]) => o.unit?.hpp != null && (
+              <div key={a} className="rounded-2xl border border-line px-3 py-2.5 text-[13.5px]">
+                <div className="font-extrabold mb-1">{a === "jakarta" ? "Jabodetabek" : "Bandung Raya"} <span className="pill ml-1">{o.gate?.status}</span></div>
+                <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-0.5 num">
+                  <dt className="text-ink/65">Harga normal</dt><dd className="font-bold text-right">{rp(o.unit.listPrice)}</dd>
+                  <dt className="text-ink/65">Harga promo (dibayar customer)</dt><dd className="font-bold text-right">{rp(o.unit.customerPays)}</dd>
+                  <dt className="text-ink/65">Diskon ditanggung CRK</dt><dd className="font-bold text-right">{rp(o.unit.merchantDiscount)}</dd>
+                  <dt className="text-ink/65">HPP</dt><dd className="font-bold text-right">{rp(o.unit.hpp)}</dd>
+                  <dt className="text-ink/65">Potongan platform</dt><dd className="font-bold text-right">{rp(o.unit.platformFees)}</dd>
+                  <dt className="text-ink/65">CM per unit</dt><dd className={`font-extrabold text-right ${o.unit.cm < 0 ? "text-bata" : ""}`}>{rp(o.unit.cm)} ({pc(o.unit.cmPct)})</dd>
+                  <dt className="text-ink/65">CM normal tanpa promo</dt><dd className="font-bold text-right">{rp(o.unit.normalCM)}</dd>
+                </dl>
+              </div>
+            ))}
+            <p className="text-[12.5px] text-ink/60">Dengan menyetujui, Anda menyatakan harga promo, HPP, dan CM di atas sudah benar. Nama dan waktu Anda tercatat di promo dan Riwayat. Setelah itu promo menunggu keputusan Marketing Manager.</p>
+          </div>
+        )}
         <textarea className="field min-h-[100px]" placeholder="Catatan (wajib bila dikembalikan/ditolak)" value={note} onChange={(e) => setNote(e.target.value)} />
         <div className="flex flex-wrap gap-2 mt-3">
           {dlg === "review" ? (<>
-            <button className="btn-primary" onClick={() => call("review", { decision: "approve", note }, "Lolos review Finance")}><Check size={16} />Approve</button>
+            <button className="btn-primary" onClick={() => call("review", { decision: "approve", note }, "Pricing disetujui")}><Check size={16} />Setujui pricing</button>
             <button className="btn-ghost" onClick={() => call("review", { decision: "return", note }, "Dikembalikan ke draft")}><Undo2 size={16} />Kembalikan</button>
           </>) : (<>
             <button className="btn-primary" onClick={() => call("approve", { decision: "approve", note }, "Promo disetujui", true)}><Check size={16} />Setujui</button>

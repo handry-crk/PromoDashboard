@@ -56,7 +56,7 @@ ROLES = {
     "team_leader": "Marketing Team Leader",
     "revenue_growth": "Revenue Growth Specialist",
     "planner": "Promo Planner / Marketing",
-    "finance": "Finance",
+    "finance": "Finance / Cost Control",
     "channel_pic": "Channel PIC (Delivery / Marketplace)",
     "viewer": "Viewer",
 }
@@ -245,8 +245,8 @@ def redact_results(res: dict) -> dict:
     return out
 
 
-PROMO_ACT = {"create": "Membuat promo", "recalc": "Mengubah / menghitung ulang promo", "submit": "Mengajukan promo ke Finance",
-             "review_ok": "Meloloskan review margin", "return": "Mengembalikan promo ke draft", "approve": "Menyetujui promo",
+PROMO_ACT = {"create": "Membuat promo", "recalc": "Mengubah / menghitung ulang promo", "submit": "Mengajukan promo ke Finance / Cost Control",
+             "review_ok": "Menyetujui pricing promo", "return": "Mengembalikan promo ke draft", "approve": "Menyetujui promo",
              "reject": "Menolak promo", "actual_input": "Mengisi hasil aktual promo", "edit": "Mengubah promo", "delete": "Menghapus promo",
              "run_direct": "Menjalankan promo langsung dari rekomendasi"}
 
@@ -637,6 +637,13 @@ def promo_view(p):
     return p
 
 
+def hide_pricing(v: dict):
+    """Viewer tidak melihat angka HPP/CM dalam catatan approval pricing."""
+    if v.get("pricingApproval"):
+        v["pricingApproval"] = {k: x for k, x in v["pricingApproval"].items() if k != "pricing"}
+    return v
+
+
 @app.get("/api/state")
 def state(user=Depends(current_user)):
     s = get_settings()
@@ -644,6 +651,7 @@ def state(user=Depends(current_user)):
     viewer = is_viewer(user)
     if viewer:
         for p in promos:
+            hide_pricing(p)
             p["summary"] = redact_summary(p.get("summary"))
             if p.get("actual"):
                 p["actual"] = {k: v for k, v in p["actual"].items() if k not in ("contribution", "platformFees", "merchantDiscount")}
@@ -783,6 +791,7 @@ def get_promo(pid: str, user=Depends(current_user)):
     v["results"] = clean(p).get("results")
     v["targets"] = aggregate_targets(p.get("summary") or {})
     if is_viewer(user):
+        hide_pricing(v)
         v["results"] = redact_results(v["results"])
         v["summary"] = redact_summary(v.get("summary"))
         v["targets"] = {k: v["targets"].get(k) for k in ("targetUnits", "targetTakeRate")}
@@ -905,7 +914,8 @@ def update_promo(pid: str, body: dict, user=Depends(require("planner", "channel_
         log_promo(pid, user, "edit", "Promo yang ditolak direvisi — kembali ke draft")
     elif mech_changed and p["status"] in ("approved", "review_head", "review_finance", "running"):
         doc["status"] = "draft"
-        log_promo(pid, user, "edit", "Mekanisme berubah setelah review — status kembali ke draft")
+        doc.pop("pricingApproval", None)
+        log_promo(pid, user, "edit", "Mekanisme berubah setelah review — status kembali ke draft, pricing perlu disetujui ulang")
     save_results(doc)
     db.promos.replace_one({"id": pid}, doc)
     log_promo(pid, user, "recalc")
@@ -940,14 +950,20 @@ def submit_promo(pid: str, body: dict | None = None, user=Depends(require("plann
 def review_promo(pid: str, body: dict, user=Depends(require("finance", "head"))):
     p = db.promos.find_one({"id": pid})
     if not p or p["status"] != "review_finance":
-        err(400, "Promo tidak sedang menunggu review Finance.")
+        err(400, "Promo tidak sedang menunggu review Finance / Cost Control.")
     if body.get("decision") == "approve":
-        db.promos.update_one({"id": pid}, {"$set": {"status": "review_head"}})
-        log_promo(pid, user, "review_ok", body.get("note", ""))
+        snap = {a: {k: (o.get("unit") or {}).get(k) for k in ("listPrice", "customerPays", "hpp", "platformFees", "cm", "cmPct")}
+                for a, o in (p.get("results") or {}).items()}
+        appr = {"byId": user["id"], "byName": user["name"], "byRole": ROLES.get(user.get("role"), ""), "at": now_iso(),
+                "note": (body.get("note") or "")[:500], "pricing": snap}
+        db.promos.update_one({"id": pid}, {"$set": {"status": "review_head", "pricingApproval": appr}})
+        detail = "; ".join(f"{a}: {E.rp(x['listPrice'])} → {E.rp(x['customerPays'])}, CM {E.rp(x['cm'])}" for a, x in snap.items()
+                           if x.get("listPrice") is not None)
+        log_promo(pid, user, "review_ok", " · ".join(x for x in (detail, body.get("note", "")) if x))
     else:
         if not body.get("note"):
             err(400, "Tulis catatan alasan pengembalian.")
-        db.promos.update_one({"id": pid}, {"$set": {"status": "draft"}})
+        db.promos.update_one({"id": pid}, {"$set": {"status": "draft"}, "$unset": {"pricingApproval": ""}})
         log_promo(pid, user, "return", body["note"])
     return get_promo(pid, user)
 
