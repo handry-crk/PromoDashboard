@@ -51,6 +51,7 @@ for k, v, d in (("SECRET_KEY", SECRET_KEY, "change-me"), ("DEFAULT_ADMIN_PIN", D
 
 SESSION_DAYS = int(os.getenv("SESSION_DAYS", "30"))
 
+AREA_NAMES = {"bandung": "Bandung Raya", "jakarta": "Jabodetabek"}
 ROLES = {
     "head": "Marketing Manager",
     "team_leader": "Marketing Team Leader",
@@ -939,6 +940,11 @@ def submit_promo(pid: str, body: dict | None = None, user=Depends(require("plann
     if p["status"] != "draft":
         err(400, f"Promo berstatus {p['status']}; hanya draft yang bisa diajukan.")
     gates = [o["gate"]["status"] for o in (p.get("results") or {}).values()]
+    prof = profiles_map().get(p.get("platformProfileId")) or {}
+    units = [o.get("unit") or {} for o in (p.get("results") or {}).values()]
+    if prof.get("channelType") != "event" and units and all(
+            not (u.get("discountTotal") or 0) and not (u.get("perceivedSaving") or 0) and not (u.get("extraCost") or 0) for u in units):
+        err(400, "Promo ini belum memberi keuntungan apa pun ke customer (hemat Rp0). Isi diskon, harga promo, atau item gratis dulu.")
     strat = (p.get("strategic") or {})
     if "HOLD" in gates and not (strat.get("isStrategic") and strat.get("reason")):
         err(400, "Promo berstatus HOLD. Perbaiki atau isi alasan strategis sebelum mengajukan.")
@@ -958,7 +964,7 @@ def review_promo(pid: str, body: dict, user=Depends(require("finance", "head")))
         appr = {"byId": user["id"], "byName": user["name"], "byRole": ROLES.get(user.get("role"), ""), "at": now_iso(),
                 "note": (body.get("note") or "")[:500], "pricing": snap}
         db.promos.update_one({"id": pid}, {"$set": {"status": "review_head", "pricingApproval": appr}})
-        detail = "; ".join(f"{a}: {E.rp(x['listPrice'])} → {E.rp(x['customerPays'])}, CM {E.rp(x['cm'])}" for a, x in snap.items()
+        detail = "; ".join(f"{AREA_NAMES.get(a, a)}: {E.rp(x['listPrice'])} → {E.rp(x['customerPays'])}, CM {E.rp(x['cm'])}" for a, x in snap.items()
                            if x.get("listPrice") is not None)
         log_promo(pid, user, "review_ok", " · ".join(x for x in (detail, body.get("note", "")) if x))
     else:
@@ -1111,19 +1117,41 @@ def edit_product(pid: str, body: dict, user=Depends(current_user)):
 async def import_products(request: Request, user=Depends(require("finance", "head"))):
     text = (await request.body()).decode("utf-8-sig")
     n = 0
-    for row in csv.DictReader(io.StringIO(text)):
+    first = text.split("\n", 1)[0]
+    delim = ";" if first.count(";") > first.count(",") else ","
+
+    def money(v):
+        v = re.sub(r"[^0-9,.\-]", "", str(v or ""))
+        if not v:
+            return None
+        if re.fullmatch(r"-?\d{1,3}([.,]\d{3})+", v):      # 10.080 atau 10,080 = pemisah ribuan
+            v = re.sub(r"[.,]", "", v)
+        try:
+            return int(float(v.replace(",", ".")))
+        except ValueError:
+            return None
+
+    for raw in csv.DictReader(io.StringIO(text), delimiter=delim):
+        row = {(k or "").strip().lower().replace(" ", "_"): (v or "").strip() for k, v in raw.items()}
         if not row.get("nama"):
             continue
-        pid = row.get("id") or row["nama"].lower().replace(" ", "-")
+        pid = row.get("id") or re.sub(r"[^a-z0-9]+", "-", row["nama"].lower()).strip("-")
         prices = {}
-        for a in ("bandung", "jakarta"):
-            if row.get(f"harga_{a}"):
-                prices[a] = int(float(row[f"harga_{a}"]))
+        for a, keys in (("bandung", ("harga_bandung", "bandung", "bdg", "harga_bdg")), ("jakarta", ("harga_jakarta", "jakarta", "jkt", "harga_jkt", "jabodetabek"))):
+            val = next((money(row[k]) for k in keys if row.get(k)), None)
+            if val:
+                prices[a] = val
+        row["hpp"] = money(row.get("hpp")) or 0
         doc = {"id": pid, "sku": row.get("sku", ""), "nama": row["nama"], "kategori": row.get("kategori", "reguler"),
-               "porsi": row.get("porsi", "-"), "hpp": int(float(row.get("hpp") or 0)), "prices": prices,
+               "porsi": row.get("porsi", "-"), "hpp": row["hpp"], "prices": prices,
                "channels": [c.strip() for c in (row.get("channels") or "kios").split("|") if c.strip()], "active": True}
         existing = db.products.find_one({"id": pid})
         if existing:
+            if not prices:                      # file hanya berisi HPP: harga lama dipertahankan
+                doc.pop("prices")
+            for k in ("sku", "kategori", "porsi", "channels"):
+                if not row.get(k):
+                    doc.pop(k, None)
             db.products.update_one({"id": pid}, {"$set": doc})
         else:
             doc["platformPrices"] = {}
@@ -2262,7 +2290,7 @@ def add_learning(body: dict, user=Depends(require("head", "planner", "finance", 
         err(400, str(e))
     d.update({"id": secrets.token_hex(5), "by": user["name"], "byId": user["id"], "createdAt": now_iso()})
     db.learnings.insert_one(d)
-    audit(user, "belajar", "Menambah hasil promo", d["nama"], f"{d['periodStart']} s.d. {d['periodEnd']}")
+    audit(user, "belajar", "Menambah hasil promo", d["nama"], T.fmt_range(date.fromisoformat(d["periodStart"]), date.fromisoformat(d["periodEnd"])))
     return clean(d)
 
 
@@ -2349,7 +2377,8 @@ def add_moment(body: dict, user=Depends(require("head", "planner", "finance"))):
     mo = {"id": secrets.token_hex(4), "date": body["date"], "end": body.get("end") or None, "label": body["label"].strip()[:60],
           "type": body.get("type") or "momen", "by": user["name"]}
     db.settings.update_one({"_id": "main"}, {"$push": {"moments": mo}})
-    audit(user, "kalender", "Menambah momen", mo["label"], mo["date"] + (f" s.d. {mo['end']}" if mo.get("end") else ""))
+    audit(user, "kalender", "Menambah momen", mo["label"],
+          T.fmt_range(date.fromisoformat(mo["date"]), date.fromisoformat(mo.get("end") or mo["date"])))
     return mo
 
 

@@ -90,7 +90,7 @@ export default function Home({ st, reload }) {
         <Stat label="Menunggu approval" value={pending.length} tone="warn" sub={unverified ? `${unverified} platform belum divalidasi` : null} />
       </div>
 
-      <div className="grid md:grid-cols-[1fr_1.2fr] gap-5">
+      <div className="grid grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-5">
         <section className="card p-4">
           <Title a="Peta" b="promo" sub="Margin vs daya tarik, semua promo" />
           <Quadrant points={sums.map((s) => ({ id: s.p.id + s.area, m: s.margin.score, a: s.menarik.score, label: `${s.p.nama} (${s.area})` }))} />
@@ -104,8 +104,8 @@ export default function Home({ st, reload }) {
                 <motion.a key={p.id} href={`#/promo/${p.id}`} className="block rounded-2xl bg-cream/60 hover:bg-blush px-3 py-2.5"
                   initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="font-bold truncate">{p.nama}</div>
-                    <span className="pill">{p.waitingActual ? "Isi hasil aktual" : STATUS[p.effectiveStatus]}</span>
+                    <div className="font-bold truncate min-w-0">{p.nama}</div>
+                    <span className="pill shrink-0">{p.waitingActual ? "Isi hasil aktual" : STATUS[p.effectiveStatus]}</span>
                   </div>
                   <div className="text-[12px] text-ink/60">{p.kode} · {fmtDate(p.periodStart)} – {fmtDate(p.periodEnd)}</div>
                   {s && <div className="flex flex-wrap gap-3 mt-1.5 items-center">

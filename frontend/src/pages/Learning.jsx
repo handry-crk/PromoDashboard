@@ -95,7 +95,7 @@ export default function Learning({ st }) {
         {!!ins.mechanisms.length && (
           <div className="mt-4 scroll-x">
             <table className="w-full min-w-[520px]">
-              <thead><tr><th className="th rounded-tl-xl">Jenis promo</th><th className="th">Channel</th><th className="th">Data</th><th className="th">Rata-rata hasil</th><th className="th">Take rate</th><th className="th rounded-tr-xl">Durasi yang berhasil</th></tr></thead>
+              <thead><tr><th className="th rounded-tl-xl">Jenis promo</th><th className="th">Channel</th><th className="th">Data</th><th className="th">Hasil</th><th className="th">Take rate</th><th className="th rounded-tr-xl">Durasi yang berhasil</th></tr></thead>
               <tbody>{ins.mechanisms.map((m) => (
                 <tr key={m.mechanism + m.platformLabel}>
                   <td className="td font-semibold">{m.label}</td><td className="td">{m.platformLabel}</td><td className="td num">{m.n}</td>

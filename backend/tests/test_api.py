@@ -516,3 +516,42 @@ def test_three_month_plan():
     b = c.post("/api/bot", headers=H(ha), json={"message": "rencana promo 3 bulan ke depan untuk gofood"}).json()
     assert b["link"]["to"] == "/rencana" and b["link"]["platformProfileId"] == "gofood" and "promo**" in b["reply"]
     assert "link" not in c.post("/api/bot", headers=H(tv), json={"message": "rencana promo 3 bulan ke depan untuk gofood"}).json()
+
+
+def test_product_csv_import_is_tolerant():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    before = {p["id"]: p for p in c.get("/api/state", headers=H(ha)).json()["products"]}["mix-mozza-ayam"]
+    # Excel Indonesia: titik koma, pemisah ribuan titik, nama kolom tanpa "harga_"
+    csv_text = "Nama;HPP;Bandung;Jakarta\nCimol Keju Uji;5.000;12.000;Rp13.000\n"
+    assert c.post("/api/products/import", headers=H(ha), content=csv_text.encode()).json()["imported"] == 1
+    # hanya HPP untuk produk lama → harga dan kategori lama tetap
+    assert c.post("/api/products/import", headers=H(ha), content=b"id,nama,hpp\nmix-mozza-ayam,Mix Mozza Ayam,9900\n").json()["imported"] == 1
+    P = {p["id"]: p for p in c.get("/api/state", headers=H(ha)).json()["products"]}
+    assert P["cimol-keju-uji"]["hpp"] == 5000 and P["cimol-keju-uji"]["prices"] == {"bandung": 12000, "jakarta": 13000}
+    assert P["mix-mozza-ayam"]["hpp"] == 9900 and P["mix-mozza-ayam"]["prices"] == before["prices"] and P["mix-mozza-ayam"]["kategori"] == before["kategori"]
+    # format lama tetap jalan
+    assert c.post("/api/products/import", headers=H(ha), content=b"nama,hpp,harga_bandung,harga_jakarta\nUji Dua,4000,10000,11000\n").json()["imported"] == 1
+
+
+def test_cannot_submit_promo_without_customer_benefit():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    base = {"objective": "aov", "platformProfileId": "offline_kios", "areas": ["bandung"], "periodStart": "2026-12-01", "periodEnd": "2026-12-14",
+            "items": [{"productId": "mix-mozza-ayam", "qty": 1}]}
+    p0 = c.post("/api/promos", headers=H(ha), json={**base, "nama": "Nol", "mechanism": "diskon_persen", "params": {"discountPct": 0}}).json()
+    r = c.post(f"/api/promos/{p0['id']}/submit", headers=H(ha))
+    assert r.status_code == 400 and "hemat Rp0" in r.json()["detail"]
+    for nama, mech, params in (("Diskon", "diskon_persen", {"discountPct": 10}), ("Stamp", "stamp_card", {"n": 5}),
+                               ("Voucher", "voucher_next_visit", {"voucherRp": 5000})):
+        p = c.post("/api/promos", headers=H(ha), json={**base, "nama": nama, "mechanism": mech, "params": params}).json()
+        assert c.post(f"/api/promos/{p['id']}/submit", headers=H(ha)).status_code == 200, nama
+    # event tanpa diskon tetap boleh (pricing event)
+    pe = c.post("/api/promos", headers=H(ha), json={**base, "nama": "Event", "platformProfileId": "event_bazaar", "mechanism": "diskon_persen",
+                "objective": "awareness", "params": {"discountPct": 0}, "trackingReady": True}).json()
+    r = c.post(f"/api/promos/{pe['id']}/submit", headers=H(ha))
+    assert r.status_code == 200 or "hemat Rp0" not in r.json()["detail"]

@@ -168,7 +168,7 @@ export default function Calculator({ st, reload, promoId }) {
       const body = clean(promo);
       const r = saved ? await api(`/promos/${saved.id}`, { method: "PUT", body }) : await api("/promos", { method: "POST", body });
       if (submit) await api(`/promos/${r.id}/submit`, { method: "POST", body: {} });
-      toast(submit ? "Promo diajukan ke Finance" : "Promo tersimpan");
+      toast(submit ? "Promo diajukan ke Finance / Cost Control" : "Promo tersimpan");
       reload();
       go(`/promo/${r.id}`);
     } catch (e) { toast(e.message, "bad"); }

@@ -143,9 +143,9 @@ function Main() {
         {path !== "/asisten" && (
           <motion.a href="#/asisten" aria-label="Buka asisten promo" title="Asisten promo"
             initial={{ scale: 0, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
-            className={`fixed z-40 right-4 bottom-20 xl:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 items-center gap-2 pr-3 ${path === "/hitung" ? "hidden lg:flex" : "flex"}`}>
+            className={`fixed z-40 right-4 bottom-20 xl:bottom-6 rounded-full bg-paper border-2 border-bata shadow-lg p-1.5 items-center gap-2 2xl:pr-3 ${path === "/hitung" ? "hidden lg:flex" : "flex"}`}>
             <BotFace size={40} />
-            <span className="hidden md:inline text-[13px] font-extrabold text-bata">Tanya promo</span>
+            <span className="hidden 2xl:inline text-[13px] font-extrabold text-bata">Tanya promo</span>
           </motion.a>
         )}
       </AnimatePresence>

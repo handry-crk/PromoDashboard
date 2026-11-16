@@ -35,3 +35,6 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Anak grid/flex tidak boleh melebarkan kolom melewati layar (nama promo panjang, baris angka). */
+.grid > * { min-width: 0; }

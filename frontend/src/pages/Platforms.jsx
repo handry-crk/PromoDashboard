@@ -54,7 +54,7 @@ export default function Platforms({ st, reload }) {
                     </div>
                     {canEdit(p) && <button aria-label={`Edit ${p.label}`} onClick={() => setEdit(JSON.parse(JSON.stringify(p)))} className="w-9 h-9 rounded-full hover:bg-blush flex items-center justify-center"><Pencil size={15} /></button>}
                   </div>
-                  <div className="text-[12px] text-ink/55 mt-0.5">{p.sourceNote}</div>
+                  {p.sourceNote !== "Tanpa potongan platform" && <div className="text-[12px] text-ink/55 mt-0.5">{p.sourceNote}</div>}
                   <ul className="mt-3 space-y-1 text-[13px]">
                     {fees.length ? fees.map((c) => (
                       <li key={c.key} className="flex justify-between gap-2">

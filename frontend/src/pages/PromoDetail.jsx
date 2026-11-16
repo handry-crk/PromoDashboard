@@ -96,7 +96,7 @@ export default function PromoDetail({ st, reload, id }) {
         {p.waitingActual && <div className="mt-3 text-[14px] font-semibold text-warn">Periode promo sudah selesai — isi hasil aktual di bawah.</div>}
       </div>
 
-      {p.stale && (
+      {p.stale && p.status !== "done" && (
         <div className="card p-3 flex items-center justify-between gap-3 border-warn">
           <div className="text-[14px] font-semibold text-warn">HPP atau biaya platform berubah sejak promo ini dihitung.</div>
           {p.status !== "done" && can("planner", "channel_pic", "head") && <button className="btn-soft" onClick={recalc}><RefreshCw size={16} />Hitung ulang</button>}
