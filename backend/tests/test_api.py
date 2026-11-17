@@ -555,3 +555,30 @@ def test_cannot_submit_promo_without_customer_benefit():
                 "objective": "awareness", "params": {"discountPct": 0}, "trackingReady": True}).json()
     r = c.post(f"/api/promos/{pe['id']}/submit", headers=H(ha))
     assert r.status_code == 200 or "hemat Rp0" not in r.json()["detail"]
+
+
+def test_edit_learning_record():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    def member(name, role, pin):
+        r = c.post("/api/members", headers=H(ha), json={"name": name, "email": f"{name.lower()}@citarasakuliner.com", "role": role}).json()
+        return c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": pin}).json()["token"]
+    tl, fi = member("Kintan", "team_leader", "2222"), member("Fikri", "finance", "4444")
+    base = {"nama": "Combo Kesegaran", "platformProfileId": "offline_kios", "mechanism": "bundle", "objective": "aov", "areas": ["bandung"],
+            "periodStart": "2026-10-31", "periodEnd": "2026-11-08", "takeRate": 24.91, "achievement": 31.65, "note": "catatan lama"}
+    lid = c.post("/api/learnings", headers=H(tl), json=base).json()["id"]
+    long_note = "Dasar perhitungan: " + "x" * 900
+    r = c.put(f"/api/learnings/{lid}", headers=H(tl), json={**base, "upliftPct": 1.14, "takeRate": 25, "note": long_note})
+    assert r.status_code == 200 and r.json()["editedBy"] == "Kintan"
+    rec = next(x for x in c.get("/api/learnings", headers=H(ha)).json()["records"] if x["id"] == lid)
+    assert rec["takeRate"] == 25 and rec["upliftPct"] == 1.14 and rec["note"] == long_note and abs(rec["achievement"] - 0.3165) < 1e-9
+    # someone else (not creator, not manager) cannot edit; manager can; invalid data rejected
+    assert c.put(f"/api/learnings/{lid}", headers=H(fi), json=base).status_code == 403
+    assert c.put(f"/api/learnings/{lid}", headers=H(ha), json={**base, "nama": "Combo Kesegaran NPL"}).status_code == 200
+    assert c.put(f"/api/learnings/{lid}", headers=H(ha), json={**base, "nama": ""}).status_code == 400
+    assert c.put("/api/learnings/tidak-ada", headers=H(ha), json=base).status_code == 404
+    rows = c.get("/api/audit?category=belajar", headers=H(ha)).json()["rows"]
+    e = next(x for x in rows if x["action"] == "Mengubah hasil promo" and x["byName"] == "Kintan")
+    assert "Take rate 24.91 → 25" in e["detail"] and "Catatan diubah" in e["detail"] and e["kind"] == "ubah"

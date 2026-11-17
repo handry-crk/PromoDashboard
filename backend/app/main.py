@@ -324,7 +324,8 @@ def learning_records():
                     "objective2": d.get("objective2"),
                     "areas": d.get("areas") or [], "periodStart": ds.isoformat(), "periodEnd": de.isoformat(),
                     "takeRate": take, "upliftPct": uplift, "achievement": ach, "rating": rating, "perf": perf_of(ach, rating, uplift),
-                    "note": note, "by": d.get("by") or d.get("createdBy"), **feat})
+                    "note": note, "by": d.get("by") or d.get("createdBy"), "byId": d.get("byId"),
+                    "discountPct": d.get("discountPct"), "editedBy": d.get("editedBy"), "editedAt": d.get("editedAt"), **feat})
 
     for p in db.promos.find({"status": "done"}):
         a = p.get("actual") or {}
@@ -2292,6 +2293,36 @@ def add_learning(body: dict, user=Depends(require("head", "planner", "finance", 
     db.learnings.insert_one(d)
     audit(user, "belajar", "Menambah hasil promo", d["nama"], T.fmt_range(date.fromisoformat(d["periodStart"]), date.fromisoformat(d["periodEnd"])))
     return clean(d)
+
+
+@app.put("/api/learnings/{lid}")
+def edit_learning(lid: str, body: dict, user=Depends(require("head", "planner", "finance", "channel_pic"))):
+    r = db.learnings.find_one({"id": lid})
+    if not r:
+        err(404, "Data tidak ditemukan.")
+    if not (user.get("isAdmin") or user["perm"] == "head" or r.get("byId") == user["id"]):
+        err(403, "Hanya pembuat data atau Marketing Manager yang bisa mengubah.")
+    try:
+        d = clean_learning(body, profiles_map())
+    except ValueError as e:
+        err(400, str(e))
+    labels = {"nama": "Nama", "platformProfileId": "Channel", "mechanism": "Jenis promo", "objective": "Tujuan", "objective2": "Tujuan pendukung",
+              "areas": "Area", "periodStart": "Mulai", "periodEnd": "Selesai", "rating": "Penilaian", "takeRate": "Take rate",
+              "upliftPct": "Kenaikan revenue", "achievement": "Pencapaian target", "discountPct": "Diskon", "note": "Catatan"}
+    ch = []
+    for k, lab in labels.items():
+        if r.get(k) != d.get(k):
+            if k == "note":
+                ch.append("Catatan diubah")
+            elif k == "achievement":
+                f = lambda v: "-" if v is None else f"{v * 100:g}%"
+                ch.append(f"{lab} {f(r.get(k))} → {f(d.get(k))}")
+            else:
+                ch.append(f"{lab} {r.get(k) if r.get(k) not in (None, '') else '-'} → {d.get(k) if d.get(k) not in (None, '') else '-'}")
+    d.update({"editedBy": user["name"], "editedAt": now_iso()})
+    db.learnings.update_one({"id": lid}, {"$set": d})
+    audit(user, "belajar", "Mengubah hasil promo", d["nama"], "; ".join(ch) or "Disimpan tanpa perubahan")
+    return clean(db.learnings.find_one({"id": lid}))
 
 
 @app.delete("/api/learnings/{lid}")

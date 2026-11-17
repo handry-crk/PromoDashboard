@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Upload, Download, Trash2, GraduationCap, Check } from "lucide-react";
+import { Plus, Upload, Download, Trash2, GraduationCap, Check, Pencil } from "lucide-react";
 import { api, pc, fmtDate, CH_LABEL, CH_ORDER, safeName } from "../lib";
 import { Title, Loader, Sheet, useToast, Empty } from "../ui";
 import { NumInput } from "./Calculator";
@@ -58,13 +58,24 @@ export default function Learning({ st }) {
 
   const save = async () => {
     try {
-      const { platformProfileIds, ...body } = form;
+      const { platformProfileIds, id: editId, ...body } = form;
       if (!platformProfileIds.length) { toast("Pilih minimal satu channel.", "bad"); return; }
-      ["takeRate", "upliftPct", "achievement", "discountPct"].forEach((k) => { if (body[k] === "") body[k] = null; });
+      ["takeRate", "upliftPct", "achievement", "discountPct", "rating"].forEach((k) => { if (body[k] === "") body[k] = null; });
+      if (editId) {
+        await api(`/learnings/${editId}`, { method: "PUT", body: { ...body, platformProfileId: platformProfileIds[0] } });
+        toast("Perubahan tersimpan"); setForm(null); load(); return;
+      }
       for (const id of platformProfileIds) await api("/learnings", { method: "POST", body: { ...body, platformProfileId: id } });
       toast(platformProfileIds.length > 1 ? `Hasil promo tersimpan untuk ${platformProfileIds.length} channel` : "Hasil promo tersimpan — asisten ikut belajar"); setForm(null); load();
     } catch (e) { toast(e.message, "bad"); }
   };
+  const canEdit = (r) => r.source === "manual" && canAdd && (st.user.isAdmin || st.user.perm === "head" || r.byId === st.user.id);
+  const edit = (r) => setForm({
+    id: r.id, nama: r.nama || "", platformProfileIds: [r.platformProfileId], mechanism: r.mechanism, objective: r.objective || "trial", objective2: r.objective2 || "",
+    areas: r.areas?.length ? r.areas : ["bandung"], periodStart: r.periodStart, periodEnd: r.periodEnd, rating: r.rating ?? "",
+    takeRate: r.takeRate ?? "", upliftPct: r.upliftPct ?? "", achievement: r.achievement != null ? Math.round(r.achievement * 10000) / 100 : "",
+    discountPct: r.discountPct ?? "", note: r.note || "",
+  });
   const del = async (r) => { try { await api(`/learnings/${r.id}`, { method: "DELETE" }); load(); } catch (e) { toast(e.message, "bad"); } };
   const importCsv = async (file) => {
     try {
@@ -169,7 +180,10 @@ export default function Learning({ st }) {
               <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px]">
                 {r.hasPayday && <span className="rounded-full bg-cream px-2 py-0.5 text-ink/65 font-semibold">Mencakup gajian</span>}
                 {r.hasMoment && <span className="rounded-full bg-cream px-2 py-0.5 text-ink/65 font-semibold">Ada momen</span>}
-                {r.source === "manual" && canAdd && <button className="ml-auto text-bata p-1" aria-label={`Hapus ${r.nama}`} onClick={() => del(r)}><Trash2 size={15} /></button>}
+                {canEdit(r) && <span className="ml-auto flex items-center gap-1">
+                  <button className="inline-flex items-center gap-1 rounded-full border border-bata/60 text-bata px-2.5 min-h-[32px] text-[12.5px] font-bold hover:bg-blush" onClick={() => edit(r)} aria-label={`Edit ${r.nama}`}><Pencil size={13} />Edit</button>
+                  <button className="text-bata p-2" aria-label={`Hapus ${r.nama}`} onClick={() => del(r)}><Trash2 size={15} /></button>
+                </span>}
                 {r.source === "promo" && <a className="ml-auto underline text-bata" href={`#/promo/${r.id}`}>Buka</a>}
               </div>
               {r.note && <Note text={r.note} />}
@@ -178,11 +192,11 @@ export default function Learning({ st }) {
         </div>
       </section>
 
-      <Sheet open={!!form} onClose={() => setForm(null)} title="Masukkan hasil promo">
+      <Sheet open={!!form} onClose={() => setForm(null)} title={form?.id ? "Edit hasil promo" : "Masukkan hasil promo"}>
         {form && (
           <div className="space-y-3">
             <div><label className="lbl">Nama promo</label><input className="field" placeholder="mis. Diskon Gajian Agustus" value={form.nama} onChange={(e) => set({ nama: e.target.value })} /></div>
-            <div><span className="lbl">Channel <span className="font-normal text-ink/50">(bisa lebih dari satu)</span></span>
+            <div><span className="lbl">Channel {!form.id && <span className="font-normal text-ink/50">(bisa lebih dari satu)</span>}</span>
               <div className="space-y-1.5">
             {CH_ORDER.map((g) => {
               const list = st.profiles.filter((p) => p.channelType === g);
@@ -193,7 +207,7 @@ export default function Learning({ st }) {
                   <div className="flex flex-wrap gap-1.5">
                     {list.map((p) => {
                       const on = form.platformProfileIds.includes(p.id);
-                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => set({ platformProfileIds: on ? form.platformProfileIds.filter((x) => x !== p.id) : [...form.platformProfileIds, p.id] })}
+                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => set({ platformProfileIds: form.id ? [p.id] : on ? form.platformProfileIds.filter((x) => x !== p.id) : [...form.platformProfileIds, p.id] })}
                         className={`rounded-full px-3 min-h-[36px] text-[13px] font-semibold border ${on ? "bg-bata text-cream border-bata" : "border-line bg-white/60 text-ink/75"}`}>{p.label}</button>;
                     })}
                   </div>
@@ -238,7 +252,7 @@ export default function Learning({ st }) {
             </div>
             <div><label className="lbl">Catatan</label><textarea className="field min-h-[70px]" placeholder="Apa yang berhasil atau tidak" value={form.note} onChange={(e) => set({ note: e.target.value })} /></div>
             <p className="text-[12px] text-ink/55">Bila pencapaian vs target diisi, angka itu dipakai. Bila tidak, penilaian di atas yang dipakai.</p>
-            <button className="btn-primary w-full" onClick={save}>Simpan hasil promo</button>
+            <button className="btn-primary w-full" onClick={save}>{form.id ? "Simpan perubahan" : "Simpan hasil promo"}</button>
           </div>
         )}
       </Sheet>
