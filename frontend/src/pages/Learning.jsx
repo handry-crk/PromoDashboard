@@ -58,12 +58,16 @@ export default function Learning({ st }) {
 
   const save = async () => {
     try {
-      const { platformProfileIds, id: editId, ...body } = form;
+      const { platformProfileIds, id: editId, origPlatform, ...body } = form;
       if (!platformProfileIds.length) { toast("Pilih minimal satu channel.", "bad"); return; }
       ["takeRate", "upliftPct", "achievement", "discountPct", "rating"].forEach((k) => { if (body[k] === "") body[k] = null; });
       if (editId) {
-        await api(`/learnings/${editId}`, { method: "PUT", body: { ...body, platformProfileId: platformProfileIds[0] } });
-        toast("Perubahan tersimpan"); setForm(null); load(); return;
+        // catatan ini tetap di channel asalnya bila masih dipilih; channel tambahan menjadi catatan baru
+        const keep = platformProfileIds.includes(origPlatform) ? origPlatform : platformProfileIds[0];
+        await api(`/learnings/${editId}`, { method: "PUT", body: { ...body, platformProfileId: keep } });
+        const extra = platformProfileIds.filter((x) => x !== keep);
+        for (const id of extra) await api("/learnings", { method: "POST", body: { ...body, platformProfileId: id } });
+        toast(extra.length ? `Perubahan tersimpan, ditambah ${extra.length} channel` : "Perubahan tersimpan"); setForm(null); load(); return;
       }
       for (const id of platformProfileIds) await api("/learnings", { method: "POST", body: { ...body, platformProfileId: id } });
       toast(platformProfileIds.length > 1 ? `Hasil promo tersimpan untuk ${platformProfileIds.length} channel` : "Hasil promo tersimpan — asisten ikut belajar"); setForm(null); load();
@@ -71,7 +75,7 @@ export default function Learning({ st }) {
   };
   const canEdit = (r) => r.source === "manual" && canAdd && (st.user.isAdmin || st.user.perm === "head" || r.byId === st.user.id);
   const edit = (r) => setForm({
-    id: r.id, nama: r.nama || "", platformProfileIds: [r.platformProfileId], mechanism: r.mechanism, objective: r.objective || "trial", objective2: r.objective2 || "",
+    id: r.id, origPlatform: r.platformProfileId, nama: r.nama || "", platformProfileIds: [r.platformProfileId], mechanism: r.mechanism, objective: r.objective || "trial", objective2: r.objective2 || "",
     areas: r.areas?.length ? r.areas : ["bandung"], periodStart: r.periodStart, periodEnd: r.periodEnd, rating: r.rating ?? "",
     takeRate: r.takeRate ?? "", upliftPct: r.upliftPct ?? "", achievement: r.achievement != null ? Math.round(r.achievement * 10000) / 100 : "",
     discountPct: r.discountPct ?? "", note: r.note || "",
@@ -196,7 +200,7 @@ export default function Learning({ st }) {
         {form && (
           <div className="space-y-3">
             <div><label className="lbl">Nama promo</label><input className="field" placeholder="mis. Diskon Gajian Agustus" value={form.nama} onChange={(e) => set({ nama: e.target.value })} /></div>
-            <div><span className="lbl">Channel {!form.id && <span className="font-normal text-ink/50">(bisa lebih dari satu)</span>}</span>
+            <div><span className="lbl">Channel <span className="font-normal text-ink/50">(bisa lebih dari satu)</span></span>
               <div className="space-y-1.5">
             {CH_ORDER.map((g) => {
               const list = st.profiles.filter((p) => p.channelType === g);
@@ -207,7 +211,7 @@ export default function Learning({ st }) {
                   <div className="flex flex-wrap gap-1.5">
                     {list.map((p) => {
                       const on = form.platformProfileIds.includes(p.id);
-                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => set({ platformProfileIds: form.id ? [p.id] : on ? form.platformProfileIds.filter((x) => x !== p.id) : [...form.platformProfileIds, p.id] })}
+                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => set({ platformProfileIds: on ? form.platformProfileIds.filter((x) => x !== p.id) : [...form.platformProfileIds, p.id] })}
                         className={`rounded-full px-3 min-h-[36px] text-[13px] font-semibold border ${on ? "bg-bata text-cream border-bata" : "border-line bg-white/60 text-ink/75"}`}>{p.label}</button>;
                     })}
                   </div>
@@ -215,7 +219,7 @@ export default function Learning({ st }) {
               );
             })}
           </div>
-              {form.platformProfileIds.length > 1 && <p className="text-[12px] text-ink/55 mt-1.5">Hasil yang sama dicatat untuk tiap channel. Kalau hasilnya berbeda per channel, isi satu per satu.</p>}</div>
+              {form.platformProfileIds.length > 1 && <p className="text-[12px] text-ink/55 mt-1.5">{form.id ? "Channel tambahan disimpan sebagai catatan baru dengan isi yang sama." : "Hasil yang sama dicatat untuk tiap channel."} Kalau hasilnya berbeda per channel, isi satu per satu.</p>}</div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="lbl">Jenis promo</label>
                 <select className="field" value={form.mechanism} onChange={(e) => set({ mechanism: e.target.value })}>
