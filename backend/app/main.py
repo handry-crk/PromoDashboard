@@ -518,7 +518,7 @@ def health():
         ok = True
     except Exception:
         ok = False
-    return {"ok": ok, "db": DB_KIND}
+    return {"ok": ok, "db": DB_KIND, "version": (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "")[:7]}
 
 
 ENABLE_ADMIN_PIN = os.getenv("ENABLE_ADMIN_PIN", "false").lower() == "true"
