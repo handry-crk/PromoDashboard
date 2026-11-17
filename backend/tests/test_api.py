@@ -582,3 +582,37 @@ def test_edit_learning_record():
     rows = c.get("/api/audit?category=belajar", headers=H(ha)).json()["rows"]
     e = next(x for x in rows if x["action"] == "Mengubah hasil promo" and x["byName"] == "Kintan")
     assert "Take rate 24.91 → 25" in e["detail"] and "Catatan diubah" in e["detail"] and e["kind"] == "ubah"
+
+
+def test_priority_products_in_recommendations():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    st = c.get("/api/state", headers=H(ha)).json()
+    fp = st["settings"]["focusProducts"]
+    assert fp["mn-dhp"] == 2 and fp["mn-butterscotch"] == 2 and fp["kuah-mozza"] == 1 and fp["mn-jasmine"] == 1 and "mozza-b" not in fp
+    rec = lambda **kw: c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_kios", "objective": "aov", "area": "bandung", **kw}).json()["results"]
+    r = rec()
+    ids = lambda x: {i["productId"] for i in x["promo"]["items"]}
+    assert any(x["focus"] == 2 and ids(x) & {"mn-dhp", "mn-butterscotch"} for x in r)          # Da Hong Pao terwakili
+    assert any(x["focus"] == 1 for x in r) and sum(1 for x in r if x["focus"]) <= 3            # prioritas lain ada, tidak mendominasi
+    P = {p["id"]: p for p in st["products"]}
+    for x in r:
+        u = x["result"]["unit"]
+        assert u["cm"] > 0 and x["result"]["gate"] != "HOLD" and x["score"] <= 100
+        if ids(x) & {"mn-dhp", "mn-butterscotch"} and x["promo"]["mechanism"] == "bundle":
+            assert (u["customerPays"] - sum(P[i]["hpp"] for i in ids(x))) / u["customerPays"] >= 0.35   # margin paket tetap sehat
+            assert not any(P[i]["kategori"] == "frozen" for i in ids(x))                              # minuman + cimol siap makan
+    # a drink alone is still never discounted
+    d = c.post("/api/calc", headers=H(ha), json={"nama": "x", "objective": "trial", "mechanism": "diskon_persen", "platformProfileId": "offline_kios",
+               "areas": ["bandung"], "periodStart": "2026-12-01", "periodEnd": "2026-12-07", "items": [{"productId": "mn-dhp", "qty": 1}], "params": {"discountPct": 20}}).json()
+    o = (d.get("results") or d)["bandung"]
+    assert next(x for x in o["health"]["components"] if x["key"] == "safety")["score"] == 0
+    # manager can change priorities; cleared list → no forced picks
+    assert c.put("/api/settings", headers=H(ha), json={"focusProducts": {"mozza-b": 2, "tidak-ada": 1, "mn-dhp": 5}}).status_code == 200
+    assert c.get("/api/state", headers=H(ha)).json()["settings"]["focusProducts"] == {"mozza-b": 2}
+    assert any("mozza-b" in ids(x) and x["focus"] == 2 for x in rec())
+    c.put("/api/settings", headers=H(ha), json={"focusProducts": {}})
+    assert all(x["focus"] == 0 for x in rec())
+    assert any(r_["action"] == "Mengubah settings" and "Produk prioritas" in r_["detail"] for r_ in c.get("/api/audit?category=settings", headers=H(ha)).json()["rows"])

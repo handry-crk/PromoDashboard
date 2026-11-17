@@ -149,6 +149,7 @@ export default function Plan({ st, reload }) {
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] font-semibold">
                         <Badge label={x.result.gate} />
+                        {x.focus > 0 && <span className="rounded-full bg-ink text-cream px-2.5 py-0.5 text-[12px] font-bold whitespace-nowrap">{x.focus > 1 ? "Prioritas utama" : "Produk prioritas"}</span>}
                         <span className="pill">Sehat: {x.result.health.label}</span><span className="pill">Margin: {x.result.margin.label}</span><span className="pill">Menarik: {x.result.menarik.label}</span>
                       </div>
                       {x.timing && (

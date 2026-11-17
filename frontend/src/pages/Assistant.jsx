@@ -120,6 +120,7 @@ function PromoCard({ c, i, onOpen, onSave, canSave }) {
       </div>
       <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px] font-semibold">
         <Badge label={c.result.gate} />
+        {c.focus > 0 && <span className="rounded-full bg-ink text-cream px-2.5 py-0.5 text-[12px] font-bold whitespace-nowrap">{c.focus > 1 ? "Prioritas utama" : "Produk prioritas"}</span>}
         <span className="pill">Sehat: {c.result.health.label}</span><span className="pill">Margin: {c.result.margin.label}</span><span className="pill">Menarik: {c.result.menarik.label}</span>
       </div>
       {c.reason && <p className="text-[13px] text-ink/70 mt-2">{c.reason}</p>}

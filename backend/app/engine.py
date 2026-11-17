@@ -792,6 +792,11 @@ def unsafe_items(promo, unit, settings, mech):
     low = settings.get("lowMarginGm", 35)
     discounted = unit["discountTotal"] > 0
     bad = []
+    # Paket yang berisi item bermargin tipis (mis. minuman) tetap aman selama margin paket setelah diskon masih di atas batas:
+    # diskonnya ditanggung item bermargin tebal di paket yang sama.
+    pays = unit.get("customerPays") or 0
+    if mech == "bundle" and pays and (pays - (unit.get("hpp") or 0)) / pays * 100 >= low:
+        return bad
     for idx, (n, gm, role) in enumerate(promo.get("_itemGm", [])):
         if gm >= low:
             continue
@@ -1116,6 +1121,9 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
     if include:
         items = [p for p in items if p["id"] in include] or items
     safe_items = [p for p in items if product_gm(p) >= low]
+    focus = {k: int(v) for k, v in (settings.get("focusProducts") or {}).items() if v}
+    focus_items = [p for p in items if p["id"] in focus]
+    with_focus = lambda lst: lst + [p for p in focus_items if p not in lst]
     points = settings.get("psychPoints", [])
     step = int(settings.get("roundingStep") or 500)
     base_promo = {k: req.get(k) for k in ("objective", "periodStart", "periodEnd", "outlets", "openRate",
@@ -1168,6 +1176,26 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                     seen.add(pp)
                     add(m, [{"productId": a["id"], "qty": 1}, {"productId": b["id"], "qty": 1}], {"packagePrice": pp},
                         f"Paket {a['nama']} + {b['nama']} {rp(pp)}")
+            # produk prioritas yang tidak masuk pool di atas (mis. minuman bermargin tipis) dipasangkan dengan item bermargin tebal
+            anchors = (sorted([p for p in safe_items if p.get("kategori") != "frozen"], key=lambda p: -product_gm(p))[:8]
+                       + sorted([p for p in safe_items if p.get("kategori") == "frozen"], key=lambda p: -product_gm(p))[:3])
+            for f in focus_items:
+                if f in pool:
+                    continue
+                for a in anchors:
+                    if a["id"] == f["id"] or (f.get("kategori") == "minuman" and a.get("kategori") == "frozen"):
+                        continue        # minuman dipasangkan dengan cimol siap makan, bukan frozen pack
+                    lp = list_price(a, profile, area) + list_price(f, profile, area)
+                    seen = set()
+                    for d in (5, 10):
+                        if d > max_disc:
+                            continue
+                        pp = snap(lp * (1 - d / 100), points, step)
+                        if pp >= lp or pp in seen:
+                            continue
+                        seen.add(pp)
+                        add(m, [{"productId": a["id"], "qty": 1}, {"productId": f["id"], "qty": 1}], {"packagePrice": pp},
+                            f"Paket {a['nama']} + {f['nama']} {rp(pp)}")
             if profile.get("channelType") == "marketplace":
                 for p in safe_items:
                     lp = list_price(p, profile, area)
@@ -1187,12 +1215,12 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                         add(m, [{"productId": a["id"], "qty": 1}, {"productId": b["id"], "qty": 1}], {"addonPrice": ap},
                             f"Beli {a['nama']}, tebus {b['nama']} {rp(ap)}")
         elif m == "stamp_card":
-            for p in safe_items[:12]:
+            for p in with_focus(safe_items[:12]):
                 for n in (5, 8):
                     add(m, [{"productId": p["id"], "qty": 1}], {"n": n, "completionRate": 40, "freeProductId": p["id"]},
                         f"Stamp card beli {n} gratis 1 {p['nama']}")
         elif m == "voucher_next_visit":
-            for p in safe_items[:12]:
+            for p in with_focus(safe_items[:12]):
                 for v in (3000, 5000):
                     add(m, [{"productId": p["id"], "qty": 1}], {"voucherRp": v, "redemptionRate": 30},
                         f"Voucher balik lagi {rp(v)} ({p['nama']})")
@@ -1251,7 +1279,8 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                 mult = max(0.8, min(1.2, sum(hs) / len(hs))) if hs else 1.0
                 pr["nama"] = c["nama"] + (f" · co-funding {100-pr['funding']['merchantPct']}%" if pr["funding"]["merchantPct"] < 100 else "") + \
                     (f" · {pg}" if pg else "")
-                results.append({"promo": pr, "score": round(base * mult, 1), "multiplier": mult, "result": {
+                lv = max((focus.get(i_.get("productId"), 0) for i_ in pr.get("items") or []), default=0)
+                results.append({"promo": pr, "score": round(base * mult + 4 * lv, 1), "multiplier": mult, "focus": lv, "result": {
                     "unit": {k: u[k] for k in ("listPrice", "customerPays", "discountTotal", "discountPct", "cm", "cmPct",
                                                "effectiveTakeRate", "merchantDiscount", "platformDiscount", "platformFees")},
                     "health": {"score": o["health"]["score"], "label": o["health"]["label"]},
@@ -1263,7 +1292,8 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                     "takeaway": o["takeaway"]}})
     results.sort(key=lambda x: (-x["score"], -x["result"]["contribution"]))
     picked, seen, per_mech, per_anchor = [], set(), {}, {}
-    for strict in (True, False):
+    per_focus, n_focus, focus_cap = {}, 0, max(1, round(top * 0.6))
+    for strict, capped in ((True, True), (False, True), (False, False)):
         for x in results:
             if len(picked) >= top:
                 break
@@ -1274,12 +1304,36 @@ def recommend(req: dict, products: dict, profile: dict, settings: dict | None, b
                 continue
             if strict and (per_mech.get(mech, 0) >= 2 or per_anchor.get(anchor, 0) >= 1):
                 continue
+            fids = [i["productId"] for i in x["promo"]["items"] if i["productId"] in focus]
+            # variasi: satu produk prioritas tidak mengisi dua usulan, dan produk prioritas paling banyak 60% dari daftar
+            if fids and ((strict and any(per_focus.get(f, 0) >= 1 for f in fids)) or (capped and n_focus >= focus_cap)):
+                continue
             seen.add(key)
             per_mech[mech] = per_mech.get(mech, 0) + 1
             per_anchor[anchor] = per_anchor.get(anchor, 0) + 1
+            for f in fids:
+                per_focus[f] = per_focus.get(f, 0) + 1
+            n_focus += 1 if fids else 0
             picked.append(x)
+    # Produk prioritas harus terwakili: satu usulan untuk prioritas utama (level 2) dan satu untuk prioritas lain, bila ada yang lolos.
+    if focus and picked:
+        keys = lambda x: (x["promo"]["mechanism"], tuple(sorted(i["productId"] for i in x["promo"]["items"])))
+        for need in (2, 1):
+            if any(x.get("focus", 0) >= need for x in picked):
+                continue
+            cand = next((x for x in results if x.get("focus", 0) >= need and keys(x) not in {keys(p) for p in picked}), None)
+            if not cand:
+                continue
+            at_cap = sum(1 for p in picked if p.get("focus")) >= focus_cap
+            # bila kuota produk prioritas sudah penuh, yang diganti adalah usulan prioritas tingkat lebih rendah, bukan usulan lain
+            victims = [p for p in picked if (0 < p.get("focus", 0) < need) if at_cap] if at_cap else [p for p in picked if not p.get("focus")]
+            if len(picked) < top and not at_cap:
+                picked.append(cand)
+            elif victims:
+                picked[picked.index(victims[-1])] = cand
     picked.sort(key=lambda x: (-x["score"], -x["result"]["contribution"]))
     for i, x in enumerate(picked):
+        x["score"] = min(100.0, x["score"])
         x["rank"] = i + 1
         x["badge"] = "Rekomendasi utama" if i == 0 else "Cadangan" if i == 1 else None
         x["reason"] = reason_line(x)

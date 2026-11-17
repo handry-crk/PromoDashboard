@@ -139,6 +139,7 @@ def get_settings() -> dict:
 def public_settings(s):
     s = clean(s)
     s.pop("adminPinHash", None)
+    s["focusProducts"] = focus_map(s)
     return s
 
 
@@ -762,7 +763,21 @@ def api_recommend(body: dict, user=Depends(no_viewer)):
     return {"results": recommend_core(body, prof, s, area)}
 
 
+def focus_map(s: dict) -> dict:
+    """Produk prioritas promo: {productId: 1 (prioritas) | 2 (prioritas utama)}.
+    Bawaan (arahan Marketing Manager 17 Nov 2026): minuman dan varian Kuah Keju = prioritas; Da Hong Pao = prioritas utama."""
+    saved = s.get("focusProducts")
+    if isinstance(saved, dict):
+        return {k: int(v) for k, v in saved.items() if v in (1, 2)}
+    out = {}
+    for p in products_map().values():
+        if p.get("kategori") in ("minuman", "kuah_keju"):
+            out[p["id"]] = 2 if "da hong pao" in p.get("nama", "").lower() else 1
+    return out
+
+
 def recommend_core(body: dict, prof: dict, s: dict, area: str, top: int = 5) -> list:
+    s = {**s, "focusProducts": focus_map(s)}
     res = E.recommend(body, products_map(), prof, s, baseline_for(s, prof["id"], area), history_list(), top=top)
     for x in res:
         x["promo"]["platformProfileId"] = prof["id"]
@@ -1254,8 +1269,12 @@ def profile_versions(pid: str, user=Depends(current_user)):
 @app.put("/api/settings")
 def put_settings(body: dict, user=Depends(require("head"))):
     allowed = {"safeDiscountGm", "lowMarginGm", "offlineMarginFloorPct", "onlineMarginFloorPct", "marketplaceMarginFloorPct",
-               "psychPoints", "roundingStep", "weights", "fit", "baselines", "adminEmail", "appName"}
+               "psychPoints", "roundingStep", "weights", "fit", "baselines", "adminEmail", "appName", "focusProducts"}
     upd = {k: v for k, v in body.items() if k in allowed}
+    if "focusProducts" in upd:
+        fp = upd["focusProducts"] if isinstance(upd["focusProducts"], dict) else {}
+        known = products_map()
+        upd["focusProducts"] = {k: int(v) for k, v in fp.items() if k in known and v in (1, 2)}
     if body.get("adminPin"):
         upd["adminPinHash"] = hash_pin(str(body["adminPin"]))
     if body.get("regenerateShareToken"):
@@ -1264,7 +1283,7 @@ def put_settings(body: dict, user=Depends(require("head"))):
     db.settings.update_one({"_id": "main"}, {"$set": upd})
     names = {"safeDiscountGm": "GM aman diskon", "lowMarginGm": "GM hindari gratis", "offlineMarginFloorPct": "Batas CM offline",
              "onlineMarginFloorPct": "Batas CM online food", "marketplaceMarginFloorPct": "Batas CM marketplace",
-             "roundingStep": "Pembulatan harga", "weights": "Bobot rekomendasi", "adminEmail": "Email admin", "fit": "Matriks objective",
+             "roundingStep": "Pembulatan harga", "weights": "Bobot rekomendasi", "focusProducts": "Produk prioritas", "adminEmail": "Email admin", "fit": "Matriks objective",
              "psychPoints": "Harga psikologis", "adminPinHash": "PIN Admin cadangan diganti", "shareToken": "Link Reporting dibuat ulang"}
     ch = []
     for k, v in upd.items():
@@ -1272,7 +1291,7 @@ def put_settings(body: dict, user=Depends(require("head"))):
             continue
         if k in ("adminPinHash", "shareToken"):
             ch.append(names[k])
-        elif k in ("weights", "fit", "psychPoints", "baselines"):
+        elif k in ("weights", "fit", "psychPoints", "baselines", "focusProducts"):
             ch.append(names.get(k, k) + " diubah")
         else:
             ch.append(f"{names.get(k, k)} {before.get(k)} → {v}")
@@ -1881,7 +1900,7 @@ def bot_what(ctx: dict, profs: dict, user: dict) -> dict:
                 x["promo"]["periodStart"], x["promo"]["periodEnd"] = b["start"], b["end"]
         except HTTPException:
             pass
-        cards.append({"rank": x.get("rank"), "badge": x.get("badge"), "reason": x.get("reason"), "score": x.get("score"),
+        cards.append({"rank": x.get("rank"), "badge": x.get("badge"), "reason": x.get("reason"), "score": x.get("score"), "focus": x.get("focus", 0),
                       "promo": x["promo"], "timing": timing, "mechanismLabel": E.MECHANISMS.get(x["promo"]["mechanism"]),
                       "result": {k: x["result"].get(k) for k in ("unit", "health", "margin", "menarik", "gate", "quadrant", "contribution", "durationAdvice")}})
     t = cards[0]
@@ -1970,6 +1989,7 @@ def build_plan(prof: dict, areas: list, days: int, max_disc: int, user: dict) ->
         cursor, i, last = h_start, 0, {}   # last: productId -> end date in this plan
         prev_mech = None
         used = set()
+        top_focus_done = False
         guard = 0
         while cursor <= h_end and guard < 12:
             guard += 1
@@ -1991,7 +2011,9 @@ def build_plan(prof: dict, areas: list, days: int, max_disc: int, user: dict) ->
                     return False
                 return level < 1 or x["promo"]["mechanism"] != prev_mech
 
-            pick = next((x for lv in (2, 1, 0) for x in pool if ok(x, lv)), None)
+            # promo pertama di tiap area mengutamakan produk prioritas utama (mis. Da Hong Pao), lalu urutan skor biasa
+            order = sorted(pool, key=lambda x: -x.get("focus", 0)) if not top_focus_done else pool
+            pick = next((x for lv in (2, 1, 0) for x in order if ok(x, lv)), None)
             if not pick:
                 cursor += timedelta(days=7)
                 i += 1
@@ -2024,13 +2046,14 @@ def build_plan(prof: dict, areas: list, days: int, max_disc: int, user: dict) ->
                           "channelType": ch, "area": area, "areaLabel": "Nasional" if national else AREA_LABEL.get(area, area), "objective": obj,
                           "objectiveLabel": E.OBJECTIVES.get(obj, obj), "mechanismLabel": E.MECHANISMS.get(promo["mechanism"]),
                           "month": start.strftime("%Y-%m"), "monthLabel": f"{T.BULAN[start.month - 1]} {start.year}",
-                          "range": T.fmt_range(start, end), "days": dur, "promo": promo, "reason": pick.get("reason"),
+                          "range": T.fmt_range(start, end), "days": dur, "promo": promo, "reason": pick.get("reason"), "focus": pick.get("focus", 0),
                           "timing": ({"reasons": best.get("reasons") or [], "cautions": best.get("cautions") or [],
                                       "startDay": best.get("startDay")} if best else None),
                           "result": {k: pick["result"].get(k) for k in ("unit", "health", "margin", "menarik", "gate", "quadrant", "durationAdvice")}})
             for pid in pids:
                 last[pid] = end
             used.update(pids)
+            top_focus_done = top_focus_done or pick.get("focus", 0) >= 2 or not any(x.get("focus", 0) >= 2 for x in pool)
             prev_mech = promo["mechanism"]
             cursor = end + timedelta(days=gap_days + 1)
             i += 1

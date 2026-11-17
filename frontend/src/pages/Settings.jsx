@@ -13,6 +13,7 @@ export default function Settings({ st, reload }) {
     onlineMarginFloorPct: s.onlineMarginFloorPct, marketplaceMarginFloorPct: s.marketplaceMarginFloorPct, roundingStep: s.roundingStep,
     weights: { ...s.weights }, adminEmail: s.adminEmail || "",
   });
+  const [focus, setFocus] = useState({ ...(s.focusProducts || {}) });
   const [bl, setBl] = useState({ platformId: "offline_kios", area: "bandung" });
   const [pin, setPin] = useState(null);
   const isAdmin = st.user.isAdmin || st.user.perm === "head";
@@ -141,6 +142,31 @@ export default function Settings({ st, reload }) {
           </motion.div>
         )) : <div className="text-[14px] text-ink/55">Tidak ada pendaftaran yang menunggu.</div>}
       </section>
+      <section className="card p-4">
+        <div className="font-extrabold mb-1">Produk prioritas promo</div>
+        <p className="text-[13px] text-ink/60 mb-3">Produk yang ingin didorong. Rekomendasi, bot, dan rencana 3 bulan akan mengutamakannya dan selalu menyertakan minimal satu usulan untuknya, selama promonya tetap untung. Ketuk untuk mengganti: tidak → prioritas → prioritas utama.</p>
+        <div className="space-y-2.5">
+          {[...new Set(st.products.map((p) => p.kategori))].map((kat) => (
+            <div key={kat}>
+              <div className="text-[11.5px] font-semibold text-ink/50 mb-1 capitalize">{String(kat || "lainnya").replace(/_/g, " ")}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {st.products.filter((p) => p.kategori === kat).map((p) => {
+                  const lv = focus[p.id] || 0;
+                  return <button key={p.id} type="button" aria-label={`${p.nama}: ${["tidak prioritas", "prioritas", "prioritas utama"][lv]}`}
+                    onClick={() => setFocus((f0) => { const n = { ...f0 }; const nx = (lv + 1) % 3; if (nx) n[p.id] = nx; else delete n[p.id]; return n; })}
+                    className={`rounded-full px-3 min-h-[34px] text-[13px] font-semibold border ${lv === 2 ? "bg-bata text-cream border-bata" : lv === 1 ? "bg-blush text-bata border-bata/60" : "border-line bg-white/60 text-ink/70"}`}>
+                    {p.nama}{lv === 2 ? " ★" : ""}</button>;
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 mt-3">
+          <button className="btn-primary" onClick={() => save({ focusProducts: focus })}>Simpan produk prioritas</button>
+          <span className="text-[12.5px] text-ink/60">{Object.values(focus).filter((v) => v === 2).length} prioritas utama · {Object.values(focus).filter((v) => v === 1).length} prioritas</span>
+        </div>
+      </section>
+
       <section className="card p-4">
         <div className="font-extrabold mb-2">Link Reporting (tanpa login)</div>
         <div className="flex flex-col sm:flex-row gap-2">

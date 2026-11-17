@@ -166,6 +166,7 @@ export default function Recommend({ st, reload }) {
                     <MiniBall title="Margin" label={x.result.margin.label} score={x.result.margin.score} />
                     <MiniBall title="Menarik" label={x.result.menarik.label} score={x.result.menarik.score} />
                     <Badge label={x.result.gate} /><span className="pill">{x.result.quadrant}</span>
+                    {x.focus > 0 && <span className="rounded-full bg-ink text-cream px-2.5 py-0.5 text-[12px] font-bold whitespace-nowrap">{x.focus > 1 ? "Prioritas utama" : "Produk prioritas"}</span>}
                     {x.promo.objective2 && <span className="pill">Fit {st.objectives[x.promo.objective]}: {x.result.menarik.fit} · {st.objectives[x.promo.objective2]}: {x.result.menarik.fit2}</span>}
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3 text-[13px]">
