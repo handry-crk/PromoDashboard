@@ -2251,7 +2251,7 @@ def clean_learning(body: dict, profs: dict) -> dict:
         raise ValueError("Isi minimal satu ukuran hasil: penilaian, pencapaian vs target, atau kenaikan revenue.")
     d["areas"] = [a for a in (d.get("areas") or []) if a in ("bandung", "jakarta")] or ["bandung"]
     d["nama"] = d["nama"].strip()[:80]
-    d["note"] = (d.get("note") or "")[:400]
+    d["note"] = (d.get("note") or "").strip()[:2000]
     return d
 
 

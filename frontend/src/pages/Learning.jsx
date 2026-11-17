@@ -11,6 +11,37 @@ const TEMPLATE = "nama;platform;jenis_promo;tujuan;tujuan_pendukung;area;mulai;s
   "Diskon Gajian Agustus;gofood;diskon_persen;online;;jakarta;2026-08-25;2026-08-31;4;15;12;;20;Ramai di jam makan siang\n" +
   "Bundle Mozza Juli;offline_gerobak;bundle;aov;trial;bandung;2026-07-01;2026-07-21;;9;;110;10;\n";
 
+const nfId = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
+const pct = (v, d) => `${d === 0 ? Math.round(v) : nfId.format(v)}%`;
+const tone = (perf) => (perf == null ? null : perf >= 1 ? "#2F6B4A" : perf >= 0.8 ? "#B8741A" : "#B42F27");
+
+/* Catatan panjang: ringkas dulu, lalu bisa dibuka. Poin bernomor ("1. … 2. …") ditampilkan sebagai daftar. */
+function Note({ text }) {
+  const [open, setOpen] = useState(false);
+  const clean = text.replace(/\s+/g, " ").trim();
+  const parts = clean.split(/\s(?=\d{1,2}\.\s+\p{Lu})/u);
+  const numbered = parts.length > 1 && /^\d{1,2}\.\s/.test(parts[1]);
+  const intro = numbered && !/^\d{1,2}\.\s/.test(parts[0]) ? parts[0] : null;
+  const items = numbered ? parts.filter((x) => /^\d{1,2}\.\s/.test(x)).map((x) => x.replace(/^\d{1,2}\.\s+/, "")) : [];
+  const long = clean.length > 110 || numbered;
+  return (
+    <div className="mt-2 pt-2 border-t border-line text-[13px] text-ink/75 leading-relaxed">
+      {!open || !numbered ? (
+        <p className="break-words" style={!open && long ? { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } : undefined}>{clean}</p>
+      ) : (<>
+        {intro && <div className="font-bold text-ink/80">{intro}</div>}
+        <ol className="mt-1 space-y-1.5 list-decimal pl-5 break-words">
+          {items.map((x, i) => {
+            const k = x.indexOf(": ");
+            return <li key={i}>{k > 0 && k < 40 ? <><b className="text-ink/85">{x.slice(0, k)}</b><br />{x.slice(k + 2)}</> : x}</li>;
+          })}
+        </ol>
+      </>)}
+      {long && <button type="button" className="mt-1 text-[12.5px] font-bold text-bata" onClick={() => setOpen(!open)}>{open ? "Tutup catatan" : "Lihat catatan lengkap"}</button>}
+    </div>
+  );
+}
+
 const blank = (st) => ({
   nama: "", platformProfileIds: [st.profiles[0]?.id].filter(Boolean), mechanism: "diskon_persen", objective: "trial", objective2: "", areas: ["bandung"],
   periodStart: "", periodEnd: "", rating: 3, takeRate: "", upliftPct: "", achievement: "", discountPct: "", note: "",
@@ -122,17 +153,26 @@ export default function Learning({ st }) {
                   <div className="text-[12px] text-ink/60">{r.platformLabel} · {st.mechanisms[r.mechanism] || r.mechanism} · {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)} ({r.days} hari)</div></div>
                 <span className="pill shrink-0">{r.source === "promo" ? "Dari dashboard" : "Input manual"}</span>
               </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[13px] items-center">
-                {r.perf != null && <b style={{ color: r.perf >= 1 ? "#2F6B4A" : r.perf >= 0.8 ? "#B8741A" : "#B42F27" }}>
-                  {r.achievement != null ? `${pc(r.achievement, 0)} target` : r.rating ? RATING[r.rating - 1][1] : `Revenue ${r.upliftPct >= 0 ? "+" : ""}${r.upliftPct}%`}</b>}
-                {r.takeRate != null && <span>Take rate {r.takeRate}%</span>}
-                {r.upliftPct != null && r.achievement == null && r.rating && <span>Revenue {r.upliftPct >= 0 ? "+" : ""}{r.upliftPct}%</span>}
-                {r.hasPayday && <span className="text-ink/55">mencakup gajian</span>}
-                {r.hasMoment && <span className="text-ink/55">ada momen</span>}
-                {r.source === "manual" && canAdd && <button className="ml-auto text-bata" aria-label={`Hapus ${r.nama}`} onClick={() => del(r)}><Trash2 size={15} /></button>}
+              <div className="grid grid-cols-3 gap-1.5 mt-2.5">
+                {[
+                  r.achievement != null && ["Pencapaian target", pct(r.achievement * 100, 0), tone(r.perf)],
+                  r.achievement == null && r.rating && ["Hasil", RATING[r.rating - 1][1], tone(r.perf)],
+                  r.takeRate != null && ["Take rate", pct(r.takeRate), null],
+                  r.upliftPct != null && ["Kenaikan revenue", (r.upliftPct >= 0 ? "+" : "") + pct(r.upliftPct), null],
+                ].filter(Boolean).map(([k, v, col]) => (
+                  <div key={k} className="rounded-xl bg-cream/70 px-2.5 py-1.5 min-w-0">
+                    <div className="text-[11px] text-ink/55 font-semibold leading-tight">{k}</div>
+                    <div className="font-extrabold text-[15px] num leading-tight mt-0.5" style={col ? { color: col } : undefined}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[12px]">
+                {r.hasPayday && <span className="rounded-full bg-cream px-2 py-0.5 text-ink/65 font-semibold">Mencakup gajian</span>}
+                {r.hasMoment && <span className="rounded-full bg-cream px-2 py-0.5 text-ink/65 font-semibold">Ada momen</span>}
+                {r.source === "manual" && canAdd && <button className="ml-auto text-bata p-1" aria-label={`Hapus ${r.nama}`} onClick={() => del(r)}><Trash2 size={15} /></button>}
                 {r.source === "promo" && <a className="ml-auto underline text-bata" href={`#/promo/${r.id}`}>Buka</a>}
               </div>
-              {r.note && <div className="text-[12.5px] text-ink/65 mt-1">{r.note}</div>}
+              {r.note && <Note text={r.note} />}
             </motion.div>
           ))}
         </div>
