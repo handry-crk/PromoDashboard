@@ -478,6 +478,35 @@ def migrate_event_profiles():
 migrate_event_profiles()
 
 
+KIOS_ONLY_WORDS = ("mentai", "takoyaki", "kare")
+
+
+def migrate_kios_only_products():
+    """Arahan Marketing Manager 17 Nov 2026: minuman dan Japanese series (takoyaki, kare, mentai) tidak dijual di gerobak.
+    Jalan sekali saja; setelah itu channel produk diatur manual di Produk & HPP."""
+    key = "kios_only_2026_11_17"
+    try:
+        s_ = db.settings.find_one({"_id": "main"})
+        if not s_ or key in (s_.get("migrations") or []) or db.products.count_documents({}) == 0:
+            return
+        changed = []
+        for p in db.products.find({}):
+            nama = (p.get("nama") or "").lower()
+            if (p.get("kategori") == "minuman" or any(w in nama for w in KIOS_ONLY_WORDS)) and "gerobak" in (p.get("channels") or []):
+                db.products.update_one({"id": p["id"]}, {"$set": {"channels": [c for c in p["channels"] if c != "gerobak"]}})
+                changed.append(p)
+        db.settings.update_one({"_id": "main"}, {"$addToSet": {"migrations": key}})
+        if changed:
+            ids = {p["id"] for p in changed}
+            hit = [f"{x.get('kode', '')} {x.get('nama', '')}".strip() for x in db.promos.find({"platformProfileId": "offline_gerobak"})
+                   if x.get("status") not in ("done", "rejected") and ids & {i.get("productId") for i in x.get("items") or []}]
+            audit(None, "produk", "Mengubah channel produk", f"{len(changed)} produk tidak lagi dijual di gerobak",
+                  ", ".join(p["nama"] for p in changed) + (f". Promo gerobak yang perlu direvisi: {'; '.join(hit)}" if hit else ""))
+            log.info("Produk khusus kios: %s", ", ".join(p["nama"] for p in changed))
+    except Exception as e:  # pragma: no cover
+        log.warning("Migrasi produk khusus kios gagal: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # routes: health & auth
 # ---------------------------------------------------------------------------
@@ -1528,6 +1557,7 @@ def seed_preset_members():
 
 
 seed_preset_members()
+migrate_kios_only_products()
 
 
 @app.post("/api/invites")

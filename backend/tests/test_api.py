@@ -616,3 +616,35 @@ def test_priority_products_in_recommendations():
     c.put("/api/settings", headers=H(ha), json={"focusProducts": {}})
     assert all(x["focus"] == 0 for x in rec())
     assert any(r_["action"] == "Mengubah settings" and "Produk prioritas" in r_["detail"] for r_ in c.get("/api/audit?category=settings", headers=H(ha)).json()["rows"])
+
+
+def test_kios_only_products():
+    from app.main import migrate_kios_only_products
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    P = {p["id"]: p for p in c.get("/api/state", headers=H(ha)).json()["products"]}
+    for pid in ("ns-beef-mentai", "ns-ayam-mentai", "ns-ayam-takoyaki", "ns-ayam-kare", "ns-beef-kare", "mn-dhp", "mn-jasmine"):
+        assert "gerobak" not in P[pid]["channels"] and "kios" in P[pid]["channels"], pid
+    assert "gerobak" in P["ns-bojot-misdasem"]["channels"] and "gerobak" in P["mozza-b"]["channels"]
+    kios_only = {pid for pid, p in P.items() if "gerobak" not in p["channels"]}
+    # gerobak recommendations and plans never contain them
+    for obj in ("aov", "trial", "repeat"):
+        r = c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_gerobak", "objective": obj, "area": "bandung"}).json()["results"]
+        assert r and all(not ({i["productId"] for i in x["promo"]["items"]} & kios_only) for x in r)
+    plan = c.post("/api/plan", headers=H(ha), json={"platformProfileId": "offline_gerobak"}).json()["items"]
+    assert all(not ({i["productId"] for i in x["promo"]["items"]} & kios_only) for x in plan)
+    # kios still gets Da Hong Pao
+    r = c.post("/api/recommend", headers=H(ha), json={"platformProfileId": "offline_kios", "objective": "aov", "area": "bandung"}).json()["results"]
+    assert any({"mn-dhp", "mn-butterscotch"} & {i["productId"] for i in x["promo"]["items"]} for x in r)
+    # one-time migration fixes an older database, records it, and never overrides later manual changes
+    db.products.update_one({"id": "ns-ayam-mentai"}, {"$set": {"channels": ["kios", "gerobak", "online_food", "event"]}})
+    db.products.update_one({"id": "mn-dhp"}, {"$set": {"channels": ["kios", "gerobak"]}})
+    migrate_kios_only_products()
+    assert "gerobak" not in db.products.find_one({"id": "ns-ayam-mentai"})["channels"] and db.products.find_one({"id": "mn-dhp"})["channels"] == ["kios"]
+    rows = c.get("/api/audit?category=produk", headers=H(ha)).json()["rows"]
+    assert any(x["action"] == "Mengubah channel produk" and "Cimol Ayam Mentai" in x["detail"] and x["byName"] == "Sistem" for x in rows)
+    db.products.update_one({"id": "mn-dhp"}, {"$set": {"channels": ["kios", "gerobak"]}})   # manager decides otherwise later
+    migrate_kios_only_products()
+    assert db.products.find_one({"id": "mn-dhp"})["channels"] == ["kios", "gerobak"]

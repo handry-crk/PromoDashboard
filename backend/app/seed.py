@@ -1,6 +1,7 @@
 """Seed data: Price Structure v2 (10 Nov 2026), platform profiles, baselines, history promos."""
 
 OUTLET = ["kios", "gerobak", "online_food", "event"]
+KIOS_ONLY = [c for c in OUTLET if c != "gerobak"]   # Japanese series & minuman: tidak dijual di gerobak
 FROZEN_CH = ["kios", "marketplace", "event"]
 DRINK_CH = ["kios", "online_food", "event"]
 
@@ -32,11 +33,11 @@ PRODUCTS = [
     _p("kuah-mozza", "Kuah Keju Mozza", "kuah_keju", "-", 8245, 15000, 15000, OUTLET),
     _p("kuah-beef", "Kuah Keju Beef", "kuah_keju", "-", 8426, 15000, 15000, OUTLET),
     _p("kuah-ayam", "Kuah Keju Ayam", "kuah_keju", "-", 7874, 15000, 15000, OUTLET),
-    _p("ns-beef-mentai", "Cimol Beef Mentai", "new_series", "-", 7650, 15000, 15000, OUTLET),
-    _p("ns-ayam-mentai", "Cimol Ayam Mentai", "new_series", "-", 7494, 15000, 15000, OUTLET),
-    _p("ns-ayam-takoyaki", "Cimol Ayam Saus Takoyaki", "new_series", "-", 8286, 15000, 15000, OUTLET),
-    _p("ns-ayam-kare", "Cimol Ayam Kare Jepang", "new_series", "-", 8952, 15000, 15000, OUTLET),
-    _p("ns-beef-kare", "Cimol Beef Kare Jepang", "new_series", "-", 9108, 15000, 15000, OUTLET),
+    _p("ns-beef-mentai", "Cimol Beef Mentai", "new_series", "-", 7650, 15000, 15000, KIOS_ONLY),
+    _p("ns-ayam-mentai", "Cimol Ayam Mentai", "new_series", "-", 7494, 15000, 15000, KIOS_ONLY),
+    _p("ns-ayam-takoyaki", "Cimol Ayam Saus Takoyaki", "new_series", "-", 8286, 15000, 15000, KIOS_ONLY),
+    _p("ns-ayam-kare", "Cimol Ayam Kare Jepang", "new_series", "-", 8952, 15000, 15000, KIOS_ONLY),
+    _p("ns-beef-kare", "Cimol Beef Kare Jepang", "new_series", "-", 9108, 15000, 15000, KIOS_ONLY),
     _p("ns-bojot-misdasem", "Cimol Bojot Saus Misdasem", "new_series", "-", 6833, 10000, 10000, OUTLET),
     _p("ns-bojot-kacang", "Cimol Bojot Saus Kacang", "new_series", "-", 6958, 10000, 10000, OUTLET),
     _p("fz-mozza-asin", "Frozen Mozza Asin Pedas", "frozen", "-", 9996, 26000, 26000, FROZEN_CH),
