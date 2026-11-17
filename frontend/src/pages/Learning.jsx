@@ -165,7 +165,7 @@ export default function Learning({ st }) {
             <motion.div key={r.source + r.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 12) * 0.03 }} className="card p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0"><div className="font-bold truncate">{r.nama}</div>
-                  <div className="text-[12px] text-ink/60">{r.platformLabel} · {st.mechanisms[r.mechanism] || r.mechanism} · {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)} ({r.days} hari)</div></div>
+                  <div className="text-[12px] text-ink/60">{r.platformLabel} · {(r.areas || []).map((a) => (a === "jakarta" ? "Jabodetabek" : "Bandung Raya")).join(" + ")}{r.areas?.length ? " · " : ""}{st.mechanisms[r.mechanism] || r.mechanism} · {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)} ({r.days} hari)</div></div>
                 <span className="pill shrink-0">{r.source === "promo" ? "Dari dashboard" : "Input manual"}</span>
               </div>
               <div className="grid grid-cols-3 gap-1.5 mt-2.5">
@@ -234,10 +234,15 @@ export default function Learning({ st }) {
                   <option value="">Tidak ada</option>
                   {Object.entries(st.objectives).filter(([k]) => k !== form.objective).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select></div>
-              <div><label className="lbl">Area</label>
-                <select className="field" value={form.areas[0]} onChange={(e) => set({ areas: [e.target.value] })}>
-                  <option value="bandung">Bandung Raya</option><option value="jakarta">Jabodetabek</option>
-                </select></div>
+              <div className="col-span-2"><span className="lbl">Area <span className="font-normal text-ink/50">(bisa dua)</span></span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[["bandung", "Bandung Raya"], ["jakarta", "Jabodetabek"]].map(([k, l]) => {
+                    const on = form.areas.includes(k);
+                    return <button key={k} type="button" aria-pressed={on}
+                      onClick={() => { const next = on ? form.areas.filter((x) => x !== k) : [...form.areas, k]; if (next.length) set({ areas: next }); }}
+                      className={`rounded-xl min-h-[46px] px-1 text-[13px] font-semibold border leading-tight ${on ? "bg-bata text-cream border-bata" : "border-line bg-white/60 text-ink/75"}`}>{l}</button>;
+                  })}
+                </div></div>
               <div><label className="lbl">Mulai</label><input type="date" className="field" value={form.periodStart} onChange={(e) => set({ periodStart: e.target.value })} /></div>
               <div><label className="lbl">Selesai</label><input type="date" className="field" value={form.periodEnd} onChange={(e) => set({ periodEnd: e.target.value })} /></div>
             </div>
