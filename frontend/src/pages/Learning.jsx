@@ -12,7 +12,7 @@ const TEMPLATE = "nama;platform;jenis_promo;tujuan;tujuan_pendukung;area;mulai;s
   "Bundle Mozza Juli;offline_gerobak;bundle;aov;trial;bandung;2026-07-01;2026-07-21;;9;;110;10;\n";
 
 const blank = (st) => ({
-  nama: "", platformProfileId: st.profiles[0]?.id || "", mechanism: "diskon_persen", objective: "trial", objective2: "", areas: ["bandung"],
+  nama: "", platformProfileIds: [st.profiles[0]?.id].filter(Boolean), mechanism: "diskon_persen", objective: "trial", objective2: "", areas: ["bandung"],
   periodStart: "", periodEnd: "", rating: 3, takeRate: "", upliftPct: "", achievement: "", discountPct: "", note: "",
 });
 
@@ -27,10 +27,11 @@ export default function Learning({ st }) {
 
   const save = async () => {
     try {
-      const body = { ...form };
+      const { platformProfileIds, ...body } = form;
+      if (!platformProfileIds.length) { toast("Pilih minimal satu channel.", "bad"); return; }
       ["takeRate", "upliftPct", "achievement", "discountPct"].forEach((k) => { if (body[k] === "") body[k] = null; });
-      await api("/learnings", { method: "POST", body });
-      toast("Hasil promo tersimpan — asisten ikut belajar"); setForm(null); load();
+      for (const id of platformProfileIds) await api("/learnings", { method: "POST", body: { ...body, platformProfileId: id } });
+      toast(platformProfileIds.length > 1 ? `Hasil promo tersimpan untuk ${platformProfileIds.length} channel` : "Hasil promo tersimpan — asisten ikut belajar"); setForm(null); load();
     } catch (e) { toast(e.message, "bad"); }
   };
   const del = async (r) => { try { await api(`/learnings/${r.id}`, { method: "DELETE" }); load(); } catch (e) { toast(e.message, "bad"); } };
@@ -141,11 +142,27 @@ export default function Learning({ st }) {
         {form && (
           <div className="space-y-3">
             <div><label className="lbl">Nama promo</label><input className="field" placeholder="mis. Diskon Gajian Agustus" value={form.nama} onChange={(e) => set({ nama: e.target.value })} /></div>
+            <div><span className="lbl">Channel <span className="font-normal text-ink/50">(bisa lebih dari satu)</span></span>
+              <div className="space-y-1.5">
+            {CH_ORDER.map((g) => {
+              const list = st.profiles.filter((p) => p.channelType === g);
+              if (!list.length) return null;
+              return (
+                <div key={g}>
+                  <div className="text-[11.5px] font-semibold text-ink/50 mb-1">{CH_LABEL[g]}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {list.map((p) => {
+                      const on = form.platformProfileIds.includes(p.id);
+                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => set({ platformProfileIds: on ? form.platformProfileIds.filter((x) => x !== p.id) : [...form.platformProfileIds, p.id] })}
+                        className={`rounded-full px-3 min-h-[36px] text-[13px] font-semibold border ${on ? "bg-bata text-cream border-bata" : "border-line bg-white/60 text-ink/75"}`}>{p.label}</button>;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+              {form.platformProfileIds.length > 1 && <p className="text-[12px] text-ink/55 mt-1.5">Hasil yang sama dicatat untuk tiap channel. Kalau hasilnya berbeda per channel, isi satu per satu.</p>}</div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="lbl">Channel</label>
-                <select className="field" value={form.platformProfileId} onChange={(e) => set({ platformProfileId: e.target.value })}>
-                  {CH_ORDER.map((g) => <optgroup key={g} label={CH_LABEL[g]}>{st.profiles.filter((p) => p.channelType === g).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</optgroup>)}
-                </select></div>
               <div><label className="lbl">Jenis promo</label>
                 <select className="field" value={form.mechanism} onChange={(e) => set({ mechanism: e.target.value })}>
                   {Object.entries(st.mechanisms).map(([k, l]) => <option key={k} value={k}>{l}</option>)}

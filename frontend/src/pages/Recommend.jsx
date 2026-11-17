@@ -8,23 +8,39 @@ import { go } from "../App";
 
 export default function Recommend({ st, reload }) {
   const toast = useToast();
-  const [f, setF] = useState({ platformProfileId: "offline_gerobak", objective: "aov", objective2: "", area: "bandung", maxDiscountPct: 20,
+  const [f, setF] = useState({ platformProfileIds: ["offline_gerobak"], objective: "aov", objective2: "", area: "bandung", maxDiscountPct: 20,
     allowCofunding: false, maxPlatformPct: 50, budget: "", programsAllowed: [], outlets: "", trxPerOutletDay: "" });
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
-  const prof = st.profiles.find((p) => p.id === f.platformProfileId);
+  const selProfs = f.platformProfileIds.map((id) => st.profiles.find((p) => p.id === id)).filter(Boolean);
+  const prof = selProfs.length === 1 ? selProfs[0] : null;
+  const anyOnline = selProfs.some((p) => p.channelType !== "offline" && p.channelType !== "event");
+  const togglePlat = (id) => setF((cur) => {
+    const on = cur.platformProfileIds.includes(id);
+    return { ...cur, platformProfileIds: on ? cur.platformProfileIds.filter((x) => x !== id) : [...cur.platformProfileIds, id], programsAllowed: [] };
+  });
+  const [emptyFor, setEmptyFor] = useState([]);
   const set = (patch) => setF({ ...f, ...patch });
 
   const run = async () => {
-    setBusy(true); setRes(null);
+    if (!selProfs.length) { toast("Pilih minimal satu platform / channel.", "bad"); return; }
+    setBusy(true); setRes(null); setEmptyFor([]);
     try {
-      const body = { ...f };
-      ["budget", "outlets", "trxPerOutletDay", "objective2"].forEach((k) => { if (body[k] === "") delete body[k]; });
+      const { platformProfileIds, ...rest } = f;
+      ["budget", "outlets", "trxPerOutletDay", "objective2"].forEach((k) => { if (rest[k] === "") delete rest[k]; });
       const t0 = Date.now();
-      const r = await api("/recommend", { method: "POST", body });
+      const all = [], none = [];
+      const many = selProfs.length > 1;
+      for (const p of selProfs) {
+        const r = await api("/recommend", { method: "POST", body: { ...rest, platformProfileId: p.id, programsAllowed: many ? [] : rest.programsAllowed,
+          allowCofunding: rest.allowCofunding && p.channelType !== "offline" } });
+        const list = many ? r.results.slice(0, 3) : r.results;
+        if (!list.length) none.push(p.label);
+        list.forEach((x, k) => all.push({ ...x, _pid: p.id, _label: p.label, _head: many && k === 0, _top: k === 0 }));
+      }
       await new Promise((ok) => setTimeout(ok, Math.max(0, 900 - (Date.now() - t0))));
-      setRes(r.results);
-      if (r.results.length) fireConfetti();
+      setRes(all); setEmptyFor(none);
+      if (all.length) fireConfetti();
     } catch (e) { toast(e.message, "bad"); } finally { setBusy(false); }
   };
 
@@ -66,11 +82,25 @@ export default function Recommend({ st, reload }) {
       <section className="card p-4 space-y-4 lg:sticky lg:top-[72px]">
         <Title a="Cari" b="rekomendasi" sub="Mesin mencoba semua kombinasi lalu memilih yang terbaik" />
         <div><span className="lbl">Platform / channel</span>
-          <select className="field" value={f.platformProfileId} onChange={(e) => set({ platformProfileId: e.target.value, programsAllowed: [] })}>
-            {CH_ORDER.map((g) => (
-              <optgroup key={g} label={CH_LABEL[g]}>{st.profiles.filter((p) => p.channelType === g).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</optgroup>
-            ))}
-          </select></div>
+<div className="space-y-1.5">
+            {CH_ORDER.map((g) => {
+              const list = st.profiles.filter((p) => p.channelType === g);
+              if (!list.length) return null;
+              return (
+                <div key={g}>
+                  <div className="text-[11.5px] font-semibold text-ink/50 mb-1">{CH_LABEL[g]}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {list.map((p) => {
+                      const on = f.platformProfileIds.includes(p.id);
+                      return <button key={p.id} type="button" aria-pressed={on} onClick={() => togglePlat(p.id)}
+                        className={`rounded-full px-3 min-h-[36px] text-[13px] font-semibold border ${on ? "bg-bata text-cream border-bata" : "border-line bg-white/60 text-ink/75"}`}>{p.label}</button>;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[12px] text-ink/55 mt-1.5">Bisa pilih lebih dari satu. {selProfs.length > 1 ? `${selProfs.length} channel dipilih: 3 rekomendasi terbaik per channel.` : ""}</p></div>
         <div><span className="lbl">Objective</span>
           <select className="field" value={f.objective} onChange={(e) => set({ objective: e.target.value, ...(f.objective2 === e.target.value ? { objective2: "" } : {}) })}>
             {Object.entries(st.objectives).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -88,7 +118,7 @@ export default function Recommend({ st, reload }) {
           <div className="flex justify-between"><span className="lbl">Diskon maksimal</span><span className="text-[14px] font-extrabold text-bata num">{f.maxDiscountPct}%</span></div>
           <input type="range" min="5" max="50" step="5" className="w-full accent-bata" aria-label="Diskon maksimal" value={f.maxDiscountPct} onChange={(e) => set({ maxDiscountPct: +e.target.value })} />
         </div>
-        {prof?.channelType !== "offline" && (<>
+        {anyOnline && (<>
           <label className="flex items-center gap-2 text-[14px] font-semibold min-h-[44px]">
             <input type="checkbox" className="w-5 h-5 accent-bata" checked={f.allowCofunding} onChange={(e) => set({ allowCofunding: e.target.checked })} />Boleh ajukan co-funding ke platform
           </label>
@@ -114,19 +144,21 @@ export default function Recommend({ st, reload }) {
             Pilih platform dan objective, lalu tekan <b>Cari rekomendasi</b>. Mesin hanya menampilkan promo yang tetap untung setelah HPP dan semua potongan platform, dan tidak mendiskon item bermargin tipis (minuman, saus Misdasem/Kacang).
           </div>
         )}
-        {res && !res.length && <div className="card p-6">{prof?.channelType === "event"
+        {res && res.length > 0 && emptyFor.length > 0 && <div className="card p-4 text-[14px]">Tidak ada promo yang lolos untuk {emptyFor.join(", ")}. Naikkan diskon maksimal atau izinkan co-funding.</div>}
+        {res && !res.length && <div className="card p-6">{selProfs.every((p) => p.channelType === "event")
           ? "Tidak ada promo yang membuat event ini balik modal dengan asumsi default. Negosiasi sewa booth atau revenue share, tambah hari event, atau ubah asumsi pengunjung di Platform & Biaya."
           : "Tidak ada kombinasi yang lolos. Naikkan diskon maksimal atau budget, atau izinkan co-funding."}</div>}
         <AnimatePresence>
           {res?.map((x, i) => (
-            <motion.article key={x.promo.nama + i} initial={{ opacity: 0, y: 24, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+            <motion.article key={(x._pid || "") + x.promo.nama + i} initial={{ opacity: 0, y: 24, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={{ delay: i * 0.12, type: "spring", stiffness: 200, damping: 20 }}
-              className={`card p-4 relative overflow-hidden ${i === 0 ? "ring-2 ring-bata" : ""}`}>
+              className={`card p-4 relative overflow-hidden ${x._top ? "ring-2 ring-bata" : ""}`}>
+              {x._head && <div className="-mx-4 -mt-4 mb-3 px-4 py-2 bg-ink text-cream text-[13px] font-extrabold">{x._label}</div>}
               <div className="flex items-start gap-3">
-                <motion.div className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-extrabold text-[18px] ${i === 0 ? "bg-bata text-cream" : "bg-blush text-bata"}`}
+                <motion.div className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center font-extrabold text-[18px] ${x._top ? "bg-bata text-cream" : "bg-blush text-bata"}`}
                   initial={{ rotate: -90, scale: 0 }} animate={{ rotate: 0, scale: 1 }} transition={{ delay: 0.15 + i * 0.12, type: "spring" }}>{x.rank}</motion.div>
                 <div className="min-w-0 flex-1">
-                  {x.badge && <div className={`text-[12px] font-extrabold ${i === 0 ? "text-bata" : "text-ink/60"}`}>{x.badge}</div>}
+                  {x.badge && <div className={`text-[12px] font-extrabold ${x._top ? "text-bata" : "text-ink/60"}`}>{x.badge}</div>}
                   <h3 className="font-extrabold text-[17px] leading-snug">{x.promo.nama}</h3>
                   <p className="text-[13px] text-ink/70 mt-0.5">{x.reason}</p>
                   <div className="flex flex-wrap gap-3 mt-2 items-center">
@@ -164,7 +196,7 @@ export default function Recommend({ st, reload }) {
           <div className="space-y-3">
             <div className="rounded-2xl bg-cream/70 px-3 py-2.5">
               <div className="font-extrabold leading-snug">{go1.x.promo.nama}</div>
-              <div className="text-[13px] text-ink/65 mt-0.5">{prof?.label} · {go1.x.promo.areas?.[0] === "jakarta" ? "Jabodetabek" : "Bandung Raya"} · CM per unit {rp(go1.x.result.unit.cm)}</div>
+              <div className="text-[13px] text-ink/65 mt-0.5">{go1.x._label || st.profiles.find((p) => p.id === go1.x.promo.platformProfileId)?.label} · {go1.x.promo.areas?.[0] === "jakarta" ? "Jabodetabek" : "Bandung Raya"} · CM per unit {rp(go1.x.result.unit.cm)}</div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="lbl" htmlFor="rn-start">Mulai</label>
