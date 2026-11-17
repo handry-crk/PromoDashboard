@@ -57,9 +57,12 @@ export default function Platforms({ st, reload }) {
                   {p.sourceNote !== "Tanpa potongan platform" && <div className="text-[12px] text-ink/55 mt-0.5">{p.sourceNote}</div>}
                   <ul className="mt-3 space-y-1 text-[13px]">
                     {fees.length ? fees.map((c) => (
-                      <li key={c.key} className="flex justify-between gap-2">
+                      <li key={c.key} className="flex flex-wrap justify-between gap-x-2">
                         <span className="text-ink/75">{c.label}{c.appliesWhen === "program_opt_in" && <span className="text-ink/45"> (program)</span>}</span>
                         <span className="font-bold num whitespace-nowrap">{c.type.startsWith("percent") ? `${(c.rate || 0).toLocaleString("id-ID")}%` : rp(c.amount)}</span>
+                        {c.type.startsWith("percent") && c.nextFrom && c.nextRate != null && c.nextRate !== "" && (
+                          <span className="basis-full text-right text-[11.5px] text-warn font-semibold -mt-0.5">{Number(c.nextRate).toLocaleString("id-ID")}% mulai {new Date(c.nextFrom).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        )}
                       </li>
                     )) : <li className="text-ink/55">Tanpa potongan platform</li>}
                     {!!p.ppnPct && <li className="flex justify-between"><span className="text-ink/75">PPN atas biaya</span><b>{p.ppnPct}%</b></li>}
@@ -110,6 +113,8 @@ function ProfileForm({ p, set, onSave }) {
               {c.type.startsWith("percent")
                 ? <div><label className="lbl">Tarif</label><NumInput suffix="%" value={c.rate} onChange={(v) => upC(i, { rate: v || 0 })} /></div>
                 : <div><label className="lbl">Nominal</label><NumInput prefix="Rp" value={c.amount} onChange={(v) => upC(i, { amount: v || 0 })} /></div>}
+              {c.type.startsWith("percent") && <div><label className="lbl">Tarif baru</label><NumInput suffix="%" value={c.nextRate ?? ""} placeholder="tidak ada" onChange={(v) => upC(i, { nextRate: v === "" ? null : v })} /></div>}
+              {c.type.startsWith("percent") && <div><label className="lbl">Mulai tanggal</label><input type="date" className="field" value={c.nextFrom || ""} onChange={(e) => upC(i, { nextFrom: e.target.value || null })} /></div>}
               {c.type === "percent_capped" && <div><label className="lbl">Batas/order</label><NumInput prefix="Rp" value={c.cap} onChange={(v) => upC(i, { cap: v || 0 })} /></div>}
               {c.type.startsWith("percent") && <div><label className="lbl">Dihitung dari</label><select className="field" value={c.base} onChange={(e) => upC(i, { base: e.target.value })}>{Object.entries(BASES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>}
               <div><label className="lbl">Berlaku</label><select className="field" value={c.appliesWhen} onChange={(e) => upC(i, { appliesWhen: e.target.value })}>{Object.entries(WHEN).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>

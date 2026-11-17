@@ -178,6 +178,7 @@ def settle(profile: dict, list_p: int, discount_total: int, merchant_pct: float,
     taxable_sum = 0
     admin_disc = float(profile.get("adminFeeDiscountPct") or 0)
     pending: list[str] = []
+    as_of = str(profile.get("_asOf") or date.today().isoformat())
     for c in profile.get("feeComponents") or []:
         if not c.get("active", True):
             continue
@@ -189,6 +190,9 @@ def settle(profile: dict, list_p: int, discount_total: int, merchant_pct: float,
         typ = c.get("type", "percent")
         rate = float(c.get("rate") or 0)
         amount = float(c.get("amount") or 0)
+        # tarif terjadwal: mulai tanggal `nextFrom`, tarif berganti ke `nextRate` (mis. Gratis Ongkir XTRA 6% → 9,5% per 1 Des 2026)
+        if c.get("nextFrom") and c.get("nextRate") not in (None, "") and as_of >= str(c["nextFrom"]):
+            rate = float(c["nextRate"])
         base = bases.get(c.get("base", "net_after_all_discount"), bases["net_after_all_discount"])
         if typ == "percent":
             v = rate / 100 * base

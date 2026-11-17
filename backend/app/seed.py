@@ -103,6 +103,24 @@ def _comp(key, label, typ="percent", rate=0, amount=0, base="net_after_merchant_
             "payer": payer, "active": True}
 
 
+# Tarif marketplace dari Marketing Manager, 17 Nov 2026 (toko non-Mall). Semua bisa diubah di Platform & Biaya.
+MP_NOTE = "Tarif dari Marketing Manager 17 Nov 2026 — cocokkan dengan Seller Center"
+SHOPEE_FEES = [
+    _comp("admin", "Biaya admin (Makanan Beku Olahan)", rate=6.75, base="net_after_all_discount", discountable=True),
+    {**_comp("gox", "Gratis Ongkir XTRA", rate=6, base="net_after_all_discount"), "nextRate": 9.5, "nextFrom": "2026-12-01"},
+    _comp("proses", "Biaya proses pesanan", "fixed_per_order", amount=1250),
+    _comp("cbx", "Cashback / Promo XTRA", "percent_capped", base="net_after_all_discount", when="program_opt_in", program="cashback_xtra"),
+    _comp("po", "Pre-order", rate=3, base="net_after_all_discount", when="program_opt_in", program="preorder"),
+]
+TIKTOK_FEES = [
+    _comp("komisi", "Komisi platform (Makanan & Minuman)", rate=7.75, base="net_after_all_discount", discountable=True),
+    _comp("dinamis", "Komisi dinamis", rate=6.5, base="net_after_all_discount"),
+    _comp("proses", "Biaya proses pesanan", "fixed_per_order", amount=1250),
+    _comp("logistik", "Biaya logistik (Jawa luar Jakarta, 0–1 kg)", "fixed_per_order", amount=990),
+    {**_comp("logistik_2_3kg", "Biaya logistik (paket 2–3 kg)", "fixed_per_order", amount=2220), "active": False},
+    _comp("growth", "Growth Xtra", "percent_capped", base="net_after_all_discount", when="program_opt_in", program="growth_xtra"),
+]
+
 PROFILES = [
     _offline("offline_kios", "Offline Kios", "kios"),
     _offline("offline_gerobak", "Offline Gerobak", "gerobak"),
@@ -143,27 +161,18 @@ PROFILES = [
            [{"label": "Pengiriman", "amount": 300000}, {"label": "Packaging premium / box", "amount": 600000},
             {"label": "Fee crew", "amount": 300000}]),
     {"id": "shopee", "platform": "shopee", "channelType": "marketplace", "productChannel": "marketplace",
-     "label": "Shopee – Star", "verified": False, "sourceNote": NOTE, "effectiveDate": "2026-11-11",
+     "label": "Shopee – Non-Mall", "verified": False, "sourceNote": MP_NOTE, "effectiveDate": "2026-11-17",
      "pricing": {"markupPct": 0, "roundingStep": 1000, "packagingFeeToCustomer": 0}, "avgUnitsPerOrder": 2,
-     "feeComponents": [
-         _comp("admin", "Biaya admin (Kategori A)", rate=10, base="net_after_all_discount", discountable=True),
-         _comp("proses", "Biaya proses pesanan", "fixed_per_order", amount=1250),
-         _comp("gox", "Gratis Ongkir XTRA", "percent_capped", base="net_after_all_discount", when="program_opt_in", program="gratis_ongkir_xtra"),
-         _comp("cbx", "Cashback / Promo XTRA", "percent_capped", base="net_after_all_discount", when="program_opt_in", program="cashback_xtra"),
-         _comp("po", "Pre-order", rate=3, base="net_after_all_discount", when="program_opt_in", program="preorder")],
+     "feeComponents": SHOPEE_FEES,
      "ppnPct": 0, "adminFeeDiscountPct": 0,
-     "programs": [{"programKey": "gratis_ongkir_xtra", "label": "Gratis Ongkir XTRA", "defaultPlatformFundingPct": 0},
-                  {"programKey": "cashback_xtra", "label": "Cashback XTRA", "defaultPlatformFundingPct": 0},
+     "programs": [{"programKey": "cashback_xtra", "label": "Cashback XTRA", "defaultPlatformFundingPct": 0},
                   {"programKey": "preorder", "label": "Pre-order", "defaultPlatformFundingPct": 0}],
      "costs": {"extraPackagingPerOrder": 6000, "returnAllowancePct": 2, "paymentFeePct": 0, "otherFixedPerOrder": 0},
      "ads": {"model": "roas", "roas": 8}, "version": 1},
     {"id": "tokopedia_tiktok", "platform": "tokopedia_tiktok", "channelType": "marketplace", "productChannel": "marketplace",
-     "label": "Tokopedia/TikTok Shop – Power Merchant", "verified": False, "sourceNote": NOTE, "effectiveDate": "2026-11-11",
+     "label": "TikTok Shop by Tokopedia – Non-Mall", "verified": False, "sourceNote": MP_NOTE, "effectiveDate": "2026-11-17",
      "pricing": {"markupPct": 0, "roundingStep": 1000, "packagingFeeToCustomer": 0}, "avgUnitsPerOrder": 2,
-     "feeComponents": [
-         _comp("komisi", "Komisi platform", rate=10, base="net_after_all_discount", discountable=True),
-         _comp("logistik", "Biaya layanan logistik (isi dari Seller Center)", "fixed_per_order", amount=0),
-         _comp("growth", "Growth Xtra", "percent_capped", base="net_after_all_discount", when="program_opt_in", program="growth_xtra")],
+     "feeComponents": TIKTOK_FEES,
      "ppnPct": 0, "adminFeeDiscountPct": 0,
      "programs": [{"programKey": "growth_xtra", "label": "Growth Xtra", "defaultPlatformFundingPct": 0}],
      "costs": {"extraPackagingPerOrder": 6000, "returnAllowancePct": 2, "paymentFeePct": 0, "otherFixedPerOrder": 0},

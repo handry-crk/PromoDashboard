@@ -7,9 +7,10 @@ P = {p["id"]: p for p in PRODUCTS}
 PR = {p["id"]: p for p in PROFILES}
 
 
-def run(promo, prof, area, base=None, **kw):
+def run(promo, prof, area, base=None, as_of=None, **kw):
     base = base if base is not None else BASELINES.get(prof, {}).get(area, {})
-    return E.run(promo, P, PR[prof], area, None, base, **kw)
+    profile = {**PR[prof], "_asOf": as_of} if as_of else PR[prof]
+    return E.run(promo, P, profile, area, None, base, **kw)
 
 
 def test_b1g1_bojot_hold():
@@ -106,18 +107,32 @@ def test_markup():
 def test_shopee_frozen():
     promo = {"mechanism": "voucher_platform", "objective": "online", "items": [{"productId": "fz-ayam-bbq"}],
              "params": {"voucherPct": 10}}
-    o = run(promo, "shopee", "bandung")
+    # tarif Marketing Manager 17 Nov 2026: admin 6,75% + Gratis Ongkir XTRA 6% + proses Rp1.250/order (2 pcs per order)
+    o = run(promo, "shopee", "bandung", as_of="2026-11-20")
     u = o["unit"]
-    assert u["merchantGross"] == 22500 and u["platformFees"] == 2250 + 625 and u["adsCost"] == 2813
-    assert u["channelCosts"] == 3000 + 450 and u["cm"] == 5189 and round(u["cmPct"] * 100, 1) == 23.1
-    assert round(u["effectiveTakeRate"] * 100, 1) == 25.3
-    o1 = run({**promo, "overrides": {"avgUnitsPerOrder": 1}}, "shopee", "bandung")
-    assert o1["unit"]["cm"] < 5189 and any(f["type"] == "bundle2" for f in o1["fixes"])
+    assert u["merchantGross"] == 22500 and u["platformFees"] == 1519 + 1350 + 625 and u["adsCost"] == 2813
+    assert u["channelCosts"] == 3000 + 450 and u["cm"] == 4570 and round(u["cmPct"] * 100, 1) == 20.3
+    assert round(u["effectiveTakeRate"] * 100, 1) == 28.0
+    # Gratis Ongkir XTRA naik ke 9,5% mulai 1 Des 2026
+    d = run(promo, "shopee", "bandung", as_of="2026-12-01")["unit"]
+    assert d["platformFees"] == 1519 + 2138 + 625 and d["cm"] == 3782
+    assert run(promo, "shopee", "bandung", as_of="2026-11-30")["unit"]["cm"] == 4570
+    o1 = run({**promo, "overrides": {"avgUnitsPerOrder": 1}}, "shopee", "bandung", as_of="2026-11-20")
+    assert o1["unit"]["cm"] < 4570 and any(f["type"] == "bundle2" for f in o1["fixes"])
+
+
+def test_tiktok_fees():
+    promo = {"mechanism": "voucher_platform", "objective": "online", "items": [{"productId": "fz-ayam-bbq"}],
+             "params": {"voucherPct": 10}}
+    u = run(promo, "tokopedia_tiktok", "bandung", as_of="2026-11-20")["unit"]
+    # komisi 7,75% + dinamis 6,5% dari 22.500, proses 1.250 dan logistik 990 per order (2 pcs)
+    assert u["platformFees"] == 1744 + 1463 + 625 + 495
+    assert u["cm"] == 22500 - (1744 + 1463 + 625 + 495) - 3450 - 2813 - 8173
 
 
 def test_pending_program_and_verify():
     promo = {"mechanism": "voucher_platform", "objective": "online", "items": [{"productId": "fz-ayam-bbq"}],
-             "params": {"voucherPct": 10}, "programsJoined": ["gratis_ongkir_xtra"], "trackingReady": True,
+             "params": {"voucherPct": 10}, "programsJoined": ["cashback_xtra"], "trackingReady": True,
              "quotaPerOutletDay": 10, "capacityPerOutletDay": 20}
     o = run(promo, "shopee", "bandung")
     assert o["gate"]["status"] == "GO WITH CONDITION"

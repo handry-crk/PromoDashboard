@@ -391,6 +391,7 @@ def compute(promo, areas=None):
     prof = profiles_map().get(promo.get("platformProfileId"))
     if not prof:
         err(400, "Pilih platform/channel promo dulu.")
+    prof = {**prof, "_asOf": promo.get("periodStart") or today().isoformat()}   # tarif platform mengikuti tanggal mulai promo
     areas = areas or promo.get("areas") or ["bandung"]
     if prof.get("channelType") == "event":
         areas = areas[:1]  # satu event = satu lokasi; mencegah event dihitung dua kali
@@ -807,6 +808,7 @@ def focus_map(s: dict) -> dict:
 
 def recommend_core(body: dict, prof: dict, s: dict, area: str, top: int = 5) -> list:
     s = {**s, "focusProducts": focus_map(s)}
+    prof = {**prof, "_asOf": body.get("asOf") or (today() + timedelta(days=7)).isoformat()}
     res = E.recommend(body, products_map(), prof, s, baseline_for(s, prof["id"], area), history_list(), top=top)
     for x in res:
         x["promo"]["platformProfileId"] = prof["id"]
@@ -1556,8 +1558,39 @@ def seed_preset_members():
         log.warning("Seed anggota gagal: %s", e)
 
 
+def migrate_marketplace_fees():
+    """Tarif marketplace dari Marketing Manager (17 Nov 2026) diterapkan sekali ke profil Shopee dan TikTok/Tokopedia yang belum divalidasi.
+    Profil yang sudah divalidasi tidak disentuh. Setelah itu tarif diatur di Platform & Biaya."""
+    key = "marketplace_fees_2026_11_17"
+    try:
+        s_ = db.settings.find_one({"_id": "main"})
+        if not s_ or key in (s_.get("migrations") or []) or db.profiles.count_documents({}) == 0:
+            return
+        done = []
+        for src in S.PROFILES:
+            if src["id"] not in ("shopee", "tokopedia_tiktok"):
+                continue
+            cur = db.profiles.find_one({"id": src["id"]})
+            if not cur or cur.get("verified"):
+                continue
+            db.profiles.update_one({"id": src["id"]}, {"$set": {
+                "label": src["label"], "feeComponents": copy.deepcopy(src["feeComponents"]), "programs": copy.deepcopy(src["programs"]),
+                "sourceNote": src["sourceNote"], "effectiveDate": src["effectiveDate"], "version": int(cur.get("version") or 1) + 1,
+                "updatedAt": now_iso()}})
+            done.append(src["label"])
+        db.settings.update_one({"_id": "main"}, {"$addToSet": {"migrations": key}})
+        if done:
+            audit(None, "platform", "Mengubah biaya platform", ", ".join(done),
+                  "Shopee: admin 6,75%, Gratis Ongkir XTRA 6% (9,5% mulai 1 Des 2026), proses Rp1.250/order. "
+                  "TikTok Shop by Tokopedia: komisi 7,75%, komisi dinamis 6,5%, proses Rp1.250/order, logistik Rp990/order. "
+                  "Sumber: Marketing Manager 17 Nov 2026; belum divalidasi ke Seller Center.")
+    except Exception as e:  # pragma: no cover
+        log.warning("Migrasi tarif marketplace gagal: %s", e)
+
+
 seed_preset_members()
 migrate_kios_only_products()
+migrate_marketplace_fees()
 
 
 @app.post("/api/invites")
@@ -2010,7 +2043,8 @@ def build_plan(prof: dict, areas: list, days: int, max_disc: int, user: dict) ->
         def cands(obj):
             if obj not in cache:
                 try:
-                    cache[obj] = recommend_core({"platformProfileId": prof["id"], "objective": obj, "area": area, "maxDiscountPct": max_disc},
+                    cache[obj] = recommend_core({"platformProfileId": prof["id"], "objective": obj, "area": area, "maxDiscountPct": max_disc,
+                                                 "asOf": (h_start + timedelta(days=14)).isoformat()},
                                                 prof, s, area, top=5)
                 except E.CalcError:
                     cache[obj] = []

@@ -648,3 +648,39 @@ def test_kios_only_products():
     db.products.update_one({"id": "mn-dhp"}, {"$set": {"channels": ["kios", "gerobak"]}})   # manager decides otherwise later
     migrate_kios_only_products()
     assert db.products.find_one({"id": "mn-dhp"})["channels"] == ["kios", "gerobak"]
+
+
+def test_marketplace_fee_migration_and_dated_rate():
+    from app.main import migrate_marketplace_fees
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    # simulate an older database with the old assumptions, and a TikTok profile the team already validated
+    db.profiles.update_one({"id": "shopee"}, {"$set": {"label": "Shopee – Star", "feeComponents": [
+        {"key": "admin", "label": "Biaya admin (Kategori A)", "type": "percent", "rate": 10, "base": "net_after_all_discount", "appliesWhen": "always", "active": True}]}})
+    db.profiles.update_one({"id": "tokopedia_tiktok"}, {"$set": {"verified": True, "label": "Punya tim"}})
+    migrate_marketplace_fees()
+    sh = db.profiles.find_one({"id": "shopee"})
+    comps = {x["key"]: x for x in sh["feeComponents"]}
+    assert sh["label"] == "Shopee – Non-Mall" and comps["admin"]["rate"] == 6.75 and comps["proses"]["amount"] == 1250
+    assert comps["gox"]["rate"] == 6 and comps["gox"]["nextRate"] == 9.5 and comps["gox"]["nextFrom"] == "2026-12-01" and sh["version"] == 2
+    assert db.profiles.find_one({"id": "tokopedia_tiktok"})["label"] == "Punya tim"      # validated profile untouched
+    assert any(r["action"] == "Mengubah biaya platform" and "6,75%" in r["detail"] for r in c.get("/api/audit?category=platform", headers=H(ha)).json()["rows"])
+    # runs once: later manual edits are kept
+    db.profiles.update_one({"id": "shopee"}, {"$set": {"label": "Diubah manual"}})
+    migrate_marketplace_fees()
+    assert db.profiles.find_one({"id": "shopee"})["label"] == "Diubah manual"
+    # the fee follows the promo start date
+    body = {"nama": "x", "objective": "online", "mechanism": "voucher_platform", "platformProfileId": "shopee", "areas": ["bandung"],
+            "items": [{"productId": "fz-ayam-bbq", "qty": 1}], "params": {"voucherPct": 10}}
+    cm = lambda a, b: (lambda d: (d.get("results") or d)["bandung"]["unit"]["cm"])(c.post("/api/calc", headers=H(ha), json={**body, "periodStart": a, "periodEnd": b}).json())
+    assert cm("2026-11-20", "2026-11-26") == 4570 and cm("2026-12-01", "2026-12-07") == 3782
+    # the manager can change the scheduled rate in Platform & Biaya
+    prof = c.get("/api/state", headers=H(ha)).json()["profiles"]
+    sp = next(p for p in prof if p["id"] == "shopee")
+    for x in sp["feeComponents"]:
+        if x["key"] == "gox":
+            x["nextRate"], x["nextFrom"] = None, None
+    assert c.put("/api/platform-profiles/shopee", headers=H(ha), json=sp).status_code == 200
+    assert cm("2026-12-01", "2026-12-07") == 4570
