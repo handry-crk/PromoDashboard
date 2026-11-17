@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Upload, Download, Trash2, GraduationCap, Check, Pencil, ChevronDown } from "lucide-react";
+import { Plus, Upload, Download, Trash2, GraduationCap, Check, Pencil, ChevronDown, BarChart3 } from "lucide-react";
 import { api, pc, fmtDate, CH_LABEL, CH_ORDER, safeName } from "../lib";
 import { Title, Loader, Sheet, useToast, Empty } from "../ui";
 import { NumInput } from "./Calculator";
@@ -68,7 +68,7 @@ function Tiles({ r, avg, small }) {
 }
 
 /* Satu kartu per promo: hasil yang sama di beberapa channel digabung. */
-function groupRecords(records) {
+export function groupRecords(records) {
   const map = new Map();
   records.forEach((r) => {
     const key = r.source === "promo" ? `promo:${r.id}` : [String(r.nama || "").trim().toLowerCase(), r.periodStart, r.periodEnd, r.mechanism].join("|");
@@ -164,11 +164,15 @@ export default function Learning({ st }) {
   return (
     <div className="space-y-5">
       <Title a="Data" b="belajar" sub="Hasil promo nyata yang dipakai asisten, rekomendasi, dan saran durasi"
-        right={canAdd && <div className="flex flex-wrap gap-2">
+        
+        right={<div className="flex flex-wrap gap-2">
+          <a className="btn-soft" href="#/performa"><BarChart3 size={16} /><span className="hidden sm:inline">Performa</span></a>
+          {canAdd && <>
           <button className="btn-soft" onClick={template}><Download size={16} /><span className="hidden sm:inline">Template CSV</span></button>
           <label className="btn-soft cursor-pointer"><Upload size={16} /><span className="hidden sm:inline">Import CSV</span>
             <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { if (e.target.files[0]) importCsv(e.target.files[0]); e.target.value = ""; }} /></label>
           <button className="btn-primary" onClick={() => setForm(blank(st))}><Plus size={16} />Hasil promo</button>
+        </>}
         </div>} />
 
       {errors && (

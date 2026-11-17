@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot, GraduationCap, History as HistI } from "lucide-react";
+import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot, GraduationCap, History as HistI, BarChart3 } from "lucide-react";
 import { api, setToken, getToken } from "./lib";
 import { Loader, useToast, Sheet } from "./ui";
 import Login from "./pages/Login";
@@ -18,6 +18,7 @@ import Assistant, { BotFace } from "./pages/Assistant";
 import Learning from "./pages/Learning";
 import HistoryPage from "./pages/History";
 import Plan from "./pages/Plan";
+import Performance from "./pages/Performance";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -34,11 +35,12 @@ const NAV = [
   { to: "/", label: "Beranda", icon: HomeI },
   { to: "/hitung", label: "Kalkulator", icon: CalcI },
   { to: "/kalender", label: "Kalender", icon: CalendarDays },
-  { to: "/rekomendasi", label: "Rekomendasi", icon: Sparkles },
+  { to: "/rekomendasi", label: "Rekomendasi", short: "Saran", icon: Sparkles },
   { to: "/library", label: "Library", icon: LibI },
 ];
 const MORE = [
   { to: "/asisten", label: "Asisten promo", short: "Asisten", icon: Bot },
+  { to: "/performa", label: "Performa promo", short: "Performa", icon: BarChart3 },
   { to: "/belajar", label: "Data belajar", short: "Belajar", icon: GraduationCap },
   { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
   { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
@@ -84,6 +86,7 @@ function Main() {
     case "/kalender": page = <CalendarPage {...props} />; break;
     case "/asisten": page = <Assistant {...props} />; break;
     case "/belajar": page = <Learning {...props} />; break;
+    case "/performa": page = <Performance {...props} />; break;
     case "/rencana": page = <Plan {...props} />; break;
     case "/riwayat": page = <HistoryPage {...props} />; break;
     case "/library": page = <Library {...props} />; break;
