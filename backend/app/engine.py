@@ -555,6 +555,64 @@ def min_healthy_price(profile, u, promo, settings, base_gp, merchant_pct, progra
             "aboveList": lo > u["list"]}
 
 
+# ---------------------------------------------------------------------------
+# harga jual normal (tanpa promo) yang sehat
+# ---------------------------------------------------------------------------
+PRICE_TARGET_EXTRA = 10   # target CM bawaan = batas minimum channel + 10 poin, supaya masih ada ruang promo
+
+
+def price_point(profile: dict, hpp: int, price: int, upo: float | None = None) -> dict:
+    """Unit economics satu produk di harga normal (tanpa promo, tanpa program)."""
+    upo = float(upo or profile.get("avgUnitsPerOrder") or 1)
+    s_ = unit_cm(profile, int(price), 0, int(hpp), merchant_pct=100, programs=[], upo=upo, overrides={}, is_promo=False)
+    return {"price": int(price), "cm": s_["cm"], "cmPct": pct(s_["cm"], price), "platformFees": s_["platformFees"],
+            "channelCosts": s_["channelCosts"], "adsCost": s_["adsCost"], "feeLines": s_["feeLines"], "costLines": s_["costLines"],
+            "hpp": int(hpp), "unitsPerOrder": upo}
+
+
+def price_for_margin(profile: dict, hpp: int, target_pct: float, upo: float | None = None) -> int | None:
+    """Harga terendah yang memberi CM ≥ target_pct % dari harga (0 = balik modal)."""
+    ok = lambda p: price_point(profile, hpp, p, upo)["cm"] >= target_pct / 100 * p
+    lo, hi = max(int(hpp), 1), max(int(hpp) * 12, 20000)
+    if not ok(hi):
+        return None
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def price_advice(profile: dict, hpp: int, settings: dict | None = None, current: int | None = None,
+                 target_pct: float | None = None, upo: float | None = None) -> dict:
+    """Harga jual normal yang sehat untuk satu produk di satu channel."""
+    settings = {**DEFAULT_SETTINGS, **(settings or {})}
+    floor = float(floor_pct(profile, settings))
+    target = float(target_pct) if target_pct not in (None, "") else floor + PRICE_TARGET_EXTRA
+    target = max(floor, min(target, 90.0))
+    step = int((profile.get("pricing") or {}).get("roundingStep") or settings.get("roundingStep") or 500)
+    be, mn, tg = (price_for_margin(profile, hpp, x, upo) for x in (0, floor, target))
+    up = lambda v: ceil_step(v, step) if v else None
+    points = sorted(settings.get("psychPoints") or [])
+    sug = up(tg)
+    # titik harga psikologis terdekat di atas harga target (maksimal +10%), supaya harga enak dilihat tanpa menurunkan margin
+    psych = next((pt for pt in points if sug and sug <= pt <= sug * 1.10), None)
+    out = {"platformId": profile["id"], "platformLabel": profile.get("label"), "channelType": profile.get("channelType"),
+           "floorPct": floor, "targetPct": target, "roundingStep": step, "breakeven": up(be), "minHealthy": up(mn), "target": sug,
+           "psych": psych if psych and psych != sug else None,
+           "atTarget": price_point(profile, hpp, sug, upo) if sug else None, "current": None, "status": None}
+    if current:
+        cur = price_point(profile, hpp, int(current), upo)
+        cmp_ = cur["cmPct"] * 100
+        status = "rugi" if cur["cm"] < 0 else "tipis" if cmp_ < floor else "cukup" if cmp_ < target else "sehat"
+        room = max(0.0, (int(current) - (up(mn) or current)) / int(current) * 100) if mn else 0.0
+        out.update({"current": cur, "status": status, "promoRoomPct": round(room, 1),
+                    "gapToMin": (up(mn) - int(current)) if mn else None, "gapToTarget": (sug - int(current)) if sug else None})
+    return out
+
+
 EVENT_SCORECARD = [
     ("audience", "Audience fit", 0.20), ("traffic", "Traffic per tenant", 0.20), ("ekonomi", "Ekonomi (break-even)", 0.20),
     ("lokasi", "Lokasi strategis", 0.10), ("exposure", "Exposure & konten", 0.10), ("ops", "Ops feasibility", 0.10),

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot, GraduationCap, History as HistI, BarChart3 } from "lucide-react";
+import { Home as HomeI, Calculator as CalcI, Sparkles, Library as LibI, MoreHorizontal, Package, Store, Settings as SetI, LogOut, CalendarDays, Bot, GraduationCap, History as HistI, BarChart3, BadgeDollarSign } from "lucide-react";
 import { api, setToken, getToken } from "./lib";
 import { Loader, useToast, Sheet } from "./ui";
 import Login from "./pages/Login";
@@ -19,6 +19,7 @@ import Learning from "./pages/Learning";
 import HistoryPage from "./pages/History";
 import Plan from "./pages/Plan";
 import Performance from "./pages/Performance";
+import Pricing from "./pages/Pricing";
 
 function useHash() {
   const [h, setH] = useState(window.location.hash.slice(1) || "/");
@@ -43,6 +44,7 @@ const MORE = [
   { to: "/performa", label: "Performa promo", short: "Performa", icon: BarChart3 },
   { to: "/belajar", label: "Data belajar", short: "Belajar", icon: GraduationCap },
   { to: "/produk", label: "Produk & HPP", short: "Produk", icon: Package },
+  { to: "/harga", label: "Harga jual sehat", short: "Harga", icon: BadgeDollarSign, noDesk: true },
   { to: "/platform", label: "Platform & Biaya", short: "Biaya", icon: Store },
   { to: "/riwayat", label: "Riwayat perubahan", short: "Riwayat", icon: HistI },
   { to: "/settings", label: "Settings", icon: SetI },
@@ -86,6 +88,7 @@ function Main() {
     case "/kalender": page = <CalendarPage {...props} />; break;
     case "/asisten": page = <Assistant {...props} />; break;
     case "/belajar": page = <Learning {...props} />; break;
+    case "/harga": page = <Pricing {...props} />; break;
     case "/performa": page = <Performance {...props} />; break;
     case "/rencana": page = <Plan {...props} />; break;
     case "/riwayat": page = <HistoryPage {...props} />; break;
@@ -97,13 +100,13 @@ function Main() {
     default: page = <Home {...props} />;
   }
   const viewer = !st.user.isAdmin && st.user.perm === "viewer";
-  const HIDE = viewer ? ["/hitung", "/rekomendasi", "/settings", "/riwayat"] : [];
+  const HIDE = viewer ? ["/hitung", "/rekomendasi", "/settings", "/riwayat", "/harga"] : [];
   const nav = NAV.filter((n) => !HIDE.includes(n.to));
   const moreNav = MORE.filter((n) => !HIDE.includes(n.to));
-  if (viewer && ["/hitung", "/rekomendasi", "/riwayat", "/rencana"].includes(path)) {
+  if (viewer && ["/hitung", "/rekomendasi", "/riwayat", "/rencana", "/harga"].includes(path)) {
     page = <div className="card p-6 text-[15px]">Halaman ini hanya untuk tim yang menghitung promo. Sebagai Viewer, Anda bisa melihat promo di Library dan Kalender.</div>;
   }
-  const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo") || (to === "/kalender" && path === "/rencana"));
+  const active = (to) => (to === "/" ? path === "/" : path === to || (to === "/library" && path === "/promo") || (to === "/kalender" && path === "/rencana") || (to === "/produk" && path === "/harga"));
 
   return (
     <div className="min-h-screen pb-24 xl:pb-10 overflow-x-clip">
@@ -117,7 +120,7 @@ function Main() {
             </div>
           </a>
           <nav className="hidden xl:flex ml-4 gap-0.5">
-            {[...nav, ...moreNav].map((n) => (
+            {[...nav, ...moreNav].filter((n) => !n.noDesk).map((n) => (
               <a key={n.to} href={`#${n.to}`} className={`relative px-2 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap ${active(n.to) ? "text-bata" : "text-cream/85 hover:text-cream"}`}>
                 {active(n.to) && <motion.span layoutId="navpill" className="absolute inset-0 rounded-full bg-cream" transition={{ type: "spring", stiffness: 400, damping: 30 }} />}
                 <span className="relative">{n.short || n.label}</span>

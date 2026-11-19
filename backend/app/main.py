@@ -780,6 +780,87 @@ def api_settlement(body: dict, user=Depends(no_viewer)):
             "effectiveTakeRate": E.pct(s["platformFees"] + s["adsCost"], s["merchantGross"])}
 
 
+PRICE_STATUS = {"rugi": "Rugi", "tipis": "Tipis", "cukup": "Cukup", "sehat": "Sehat"}
+
+
+def pricing_profiles(ids=None):
+    profs = [p for p in profiles_map().values() if p.get("channelType") != "event" and not p.get("label", "").endswith("(lama)")]
+    return [p for p in profs if not ids or p["id"] in ids]
+
+
+def _target_for(body: dict, prof: dict):
+    t = body.get("targets") or {}
+    v = t.get(prof["id"], t.get(prof.get("channelType")))
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+@app.post("/api/pricing/check")
+def pricing_check(body: dict, user=Depends(no_viewer)):
+    """Harga jual normal yang sehat untuk satu produk (dari daftar, atau HPP yang diketik) di semua channel."""
+    s = get_settings()
+    area = body.get("area") if body.get("area") in AREA_NAMES else "bandung"
+    prod = products_map().get(body.get("productId")) if body.get("productId") else None
+    try:
+        hpp = int(float(body.get("hpp"))) if body.get("hpp") not in (None, "") else (prod or {}).get("hpp")
+        trial = int(float(body["tryPrice"])) if body.get("tryPrice") not in (None, "") else None
+    except (TypeError, ValueError):
+        err(400, "Angka tidak valid.")
+    if not hpp or hpp <= 0:
+        err(400, "Isi HPP produk dulu.")
+    if hpp > 5_000_000 or (trial is not None and not 0 < trial <= 50_000_000):
+        err(400, "Angka di luar batas wajar.")
+    rows = []
+    for prof in pricing_profiles(body.get("platformIds")):
+        prof = {**prof, "_asOf": today().isoformat()}
+        sold = bool(prod and E.sells_on(prod, prof))
+        cur = E.list_price(prod, prof, area) if sold else None
+        row = E.price_advice(prof, hpp, s, current=cur, target_pct=_target_for(body, prof))
+        row["sold"] = sold if prod else None
+        row["verified"] = bool(prof.get("verified"))
+        if trial:
+            t = E.price_point(prof, hpp, trial)
+            cmp_ = t["cmPct"] * 100
+            row["trial"] = {**t, "status": "rugi" if t["cm"] < 0 else "tipis" if cmp_ < row["floorPct"] else "cukup" if cmp_ < row["targetPct"] else "sehat"}
+        rows.append(row)
+    return {"hpp": hpp, "area": area, "product": ({"id": prod["id"], "nama": prod["nama"]} if prod else None),
+            "nama": (prod or {}).get("nama") or (body.get("nama") or "Produk baru"), "rows": rows, "statusLabels": PRICE_STATUS,
+            "targetExtra": E.PRICE_TARGET_EXTRA}
+
+
+@app.post("/api/pricing/overview")
+def pricing_overview(body: dict, user=Depends(no_viewer)):
+    """Semua produk di satu channel: harga sekarang sehat atau tidak, dan berapa harga minimumnya."""
+    s = get_settings()
+    prof = profiles_map().get(body.get("platformProfileId"))
+    if not prof or prof.get("channelType") == "event":
+        err(400, "Pilih channel (selain event).")
+    area = body.get("area") if body.get("area") in AREA_NAMES else "bandung"
+    prof = {**prof, "_asOf": today().isoformat()}
+    tgt = _target_for(body, prof)
+    rows = []
+    for p in products_map().values():
+        if not E.sells_on(p, prof) or not p.get("hpp"):
+            continue
+        cur = E.list_price(p, prof, area)
+        if not cur:
+            continue
+        a = E.price_advice(prof, p["hpp"], s, current=cur, target_pct=tgt)
+        rows.append({"id": p["id"], "nama": p["nama"], "kategori": p.get("kategori"), "hpp": p["hpp"], "price": cur,
+                     "cm": a["current"]["cm"], "cmPct": a["current"]["cmPct"], "status": a["status"], "breakeven": a["breakeven"],
+                     "minHealthy": a["minHealthy"], "target": a["target"], "promoRoomPct": a.get("promoRoomPct"),
+                     "gapToMin": a.get("gapToMin"), "gapToTarget": a.get("gapToTarget")})
+    order = {"rugi": 0, "tipis": 1, "cukup": 2, "sehat": 3}
+    rows.sort(key=lambda r: (order[r["status"]], r["cmPct"]))
+    counts = {k: sum(1 for r in rows if r["status"] == k) for k in order}
+    first = E.price_advice(prof, 1000, s, target_pct=tgt)
+    return {"platformProfileId": prof["id"], "platformLabel": prof["label"], "channelType": prof.get("channelType"), "area": area,
+            "floorPct": first["floorPct"], "targetPct": first["targetPct"], "verified": bool(prof.get("verified")),
+            "unitsPerOrder": float(prof.get("avgUnitsPerOrder") or 1), "rows": rows, "counts": counts, "statusLabels": PRICE_STATUS}
+
+
 @app.post("/api/recommend")
 def api_recommend(body: dict, user=Depends(no_viewer)):
     s = get_settings()

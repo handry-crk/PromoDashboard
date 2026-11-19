@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Pencil, Upload, Download, History, Plus } from "lucide-react";
+import { Pencil, Upload, Download, History, Plus, BadgeDollarSign } from "lucide-react";
 import { api, rp, getToken, fmtDate, safeName } from "../lib";
 import { Title, Sheet, useToast } from "../ui";
 import { NumInput } from "./Calculator";
@@ -39,6 +39,7 @@ export default function Products({ st, reload }) {
       <Title a="Produk" b={canEdit || st.products[0]?.hpp != null ? "& HPP" : "& harga"} sub={`Acuan Price Structure · versi ${st.settings.priceVersion || 1}`}
         right={<div className="flex flex-wrap gap-2">
           {st.products[0]?.hpp != null && <button className="btn-soft" onClick={() => setHist("load")}><History size={16} /><span className="hidden sm:inline">Riwayat</span></button>}
+          {!(!st.user.isAdmin && st.user.perm === "viewer") && <a className="btn-primary" href="#/harga"><BadgeDollarSign size={16} /><span className="hidden sm:inline">Harga sehat</span></a>}
           {canEdit && <a className="btn-soft" href={`/api/export/products.csv?token=${getToken()}`}><Download size={16} /><span className="hidden sm:inline">Export</span></a>}
           {canEdit && <label className="btn-soft cursor-pointer"><Upload size={16} /><span className="hidden sm:inline">Import CSV</span><input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files[0] && importCsv(e.target.files[0])} /></label>}
           {canEdit && <button className="btn-primary" onClick={() => setEdit({ isNew: true, nama: "", kategori: "reguler", hpp: "", prices: {}, channels: ["kios"] })}><Plus size={16} />Produk</button>}

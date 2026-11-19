@@ -684,3 +684,40 @@ def test_marketplace_fee_migration_and_dated_rate():
             x["nextRate"], x["nextFrom"] = None, None
     assert c.put("/api/platform-profiles/shopee", headers=H(ha), json=sp).status_code == 200
     assert cm("2026-12-01", "2026-12-07") == 4570
+
+
+def test_healthy_normal_price():
+    for col in db.list_collection_names():
+        db[col].drop()
+    ha = c.post("/api/auth/register", json={"name": "Handry", "pin": "1234", "email": "handry@citarasakuliner.com"}).json()["token"]
+    c.post("/api/seed/crk", headers=H(ha))
+    d = c.post("/api/pricing/check", headers=H(ha), json={"productId": "mix-mozza-ayam", "tryPrice": 23000}).json()
+    R = {r["platformId"]: r for r in d["rows"]}
+    k = R["offline_kios"]                       # HPP 9.709, tanpa potongan: 9.709 / (1 − target)
+    assert (k["breakeven"], k["minHealthy"], k["target"]) == (10000, 14000, 16500) and k["floorPct"] == 30 and k["targetPct"] == 40
+    assert k["status"] == "sehat" and k["current"]["cm"] == 20000 - 9709 and k["promoRoomPct"] == 30.0
+    g = R["gofood"]                             # 0,8p − 667 − 1.000 − 9.709 ≥ 20% p → p ≥ 18.960
+    assert (g["breakeven"], g["minHealthy"], g["target"]) == (14500, 19000, 23000) and g["status"] == "cukup"
+    assert g["trial"]["cm"] == round(23000 * 0.8) - 667 - 1000 - 9709 and g["trial"]["status"] == "sehat"
+    for r in d["rows"]:                         # setiap harga saran benar-benar memenuhi marginnya
+        a = r["atTarget"]
+        assert a["cm"] >= r["targetPct"] / 100 * a["price"] - 1 and r["breakeven"] <= r["minHealthy"] <= r["target"]
+    assert R["shopee"]["sold"] is False and R["shopee"]["current"] is None
+    # produk baru dari HPP saja + target sendiri
+    n = c.post("/api/pricing/check", headers=H(ha), json={"hpp": 6000, "targets": {"offline": 50}}).json()
+    assert n["product"] is None and {r["platformId"]: r for r in n["rows"]}["offline_kios"]["target"] == 12000
+    # semua produk di satu channel
+    o = c.post("/api/pricing/overview", headers=H(ha), json={"platformProfileId": "gofood"}).json()
+    assert sum(o["counts"].values()) == len(o["rows"]) and o["counts"]["rugi"] >= 1
+    assert o["rows"][0]["status"] == "rugi" and o["rows"][0]["cm"] < 0 and o["rows"][0]["gapToMin"] > 0
+    assert all("gerobak" not in r["id"] for r in o["rows"])
+    ko = c.post("/api/pricing/overview", headers=H(ha), json={"platformProfileId": "offline_gerobak"}).json()
+    assert not any(r["id"].startswith("mn-") or "mentai" in r["id"] for r in ko["rows"])       # minuman & Japanese series tidak di gerobak
+    # guards
+    assert c.post("/api/pricing/check", headers=H(ha), json={}).status_code == 400
+    assert c.post("/api/pricing/check", headers=H(ha), json={"hpp": "abc"}).status_code == 400
+    assert c.post("/api/pricing/overview", headers=H(ha), json={"platformProfileId": "event_konser"}).status_code == 400
+    r = c.post("/api/members", headers=H(ha), json={"name": "Vina", "email": "vina@citarasakuliner.com", "role": "viewer"}).json()
+    tv = c.post("/api/auth/setup", json={"token": r["setupToken"], "pin": "9999"}).json()["token"]
+    assert c.post("/api/pricing/check", headers=H(tv), json={"productId": "mix-mozza-ayam"}).status_code == 403
+    assert c.post("/api/pricing/overview", headers=H(tv), json={"platformProfileId": "gofood"}).status_code == 403
